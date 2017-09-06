@@ -1,0 +1,13 @@
+
+VCFtools - v0.1.12b
+(C) Adam Auton and Anthony Marcketta 2009
+
+Parameters as interpreted:
+	--vcf 10156-586.recode.vcf
+	--012
+	--out lobster_rad
+
+After filtering, kept 586 out of 586 Individuals
+Writing 012 matrix files ... Done.
+After filtering, kept 10156 out of a possible 10156 Sites
+Run Time = 3.00 seconds

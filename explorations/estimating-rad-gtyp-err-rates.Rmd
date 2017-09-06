@@ -1,0 +1,788 @@
+---
+title: "Estimating Genotyping Error by Departures from H-W equlibrium"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+---
+
+```{r}
+# load some libs
+library(genoscapeRtools)
+library(stringr)
+library(tidyverse)
+```
+In `survey-rad-geno-freqs.Rmd` I found that of the three single-end RAD data sets I looked
+at, they all had profound departures from HW-equilibrium.  There was an excess of homozygotes.
+It seems to me that heterozygotes are being incorrectly called as homozygotes.
+
+Here I formulate a simple model to try to estimate the genotyping error rates.  I am going to focus
+exclusively on errors that lead one to infer a homozygote when the truth is a heterozygote.  I am
+going to ignore genotyping errors in the other direction (i.e., I will assume that no homozygotes are
+ever incorrectly called as heterozygotes).  
+
+
+## A Simple Model
+
+Let's start with a super simple model.  Basically, with probability $m$, a heterozygote
+will be incorrectly called as a homozygote.  In this simplest of simple models we will
+assume that if there is a genotyping error, it is equally likely that the heterozygote be
+called as either of the two homozygotes.  In other words, with probability $\frac{1}{2}m$,
+an individual with genotype 1 will be called as a 0, and with probability $\frac{1}{2}m$ it
+will be called as a 2.  We adopt the convention that diploid genotypes are named according
+to the number of alternate alleles they carry---0 = homozygous for the reference allele;
+1 = heterozygous; 2 = homozygous for the alternate allele.
+
+At locus $\ell$ let the observed number of genotypes be $N_{\ell, 0}$, $N_{\ell, 1}$, 
+$N_{\ell, 2}$.  We will let the number of unobserved, true genotypes be 
+$Z_{\ell, 0}$, $Z_{\ell, 1}$, $Z_{\ell, 2}$.  If there were no genotyping error
+than we would have that the $N$'s and the $Z$'s would all be equal.
+
+We will let $p_\ell$ be the frequency of the "1" allele (the alternate allele) 
+at locus $\ell$.  We don't know what this is, but if we knew all the 
+true genotypes, we could estimate it.  Let's say that $p_\ell$ has a beta
+prior with parameters $\alpha_0$ and $\alpha_1$.  Then it is easy to show
+that the full conditional for $p_\ell$ will depend on the $Z$'s and it will
+be a beta distribution:
+$$
+(p_\ell | \cdots) \sim \mathrm{Beta}(\alpha_1 + 2Z_{\ell, 2} + Z_{\ell, 1}, ~\alpha_0 + 2Z_{\ell, 0} + Z_{\ell, 1})
+$$
+So, given the $Z$'s it will be quite easy to udpate the allele frequency for each
+SNP.  
+
+More interesting will be updating the $Z$'s given the $N$'s.  To get our head around 
+this, let's write down the probability of each observed genotype given the true
+underlying one.  Let $X_\ell$ denote the true genotype of some individual at locus
+$\ell$, and $Y_\ell$ denote the observed genotype
+at an individual at a locus.  Then, for example:
+$$
+\begin{aligned}
+P(Y_\ell = 0~|~X_\ell = 0) & = 1 \\
+P(Y_\ell = 0~|~X_\ell = 1) & = m/2 \\
+P(Y_\ell = 0~|~X_\ell = 2) & = 0.
+\end{aligned}
+$$
+And this can be inverted using Bayes Theorem (along with the expected true
+genotype frequencies, which are the priors for the true genotypes) to give us
+$$
+\begin{aligned}
+P(X_\ell = 0~|~Y_\ell = 0) & \propto (1-p_\ell)^2 \\
+P(X_\ell = 1~|~Y_\ell = 0) & \propto 2p_\ell(1-p_\ell) m/2  = mp_\ell(1-p_\ell) \\
+P(X_\ell = 2~|~Y_\ell = 0) & = 0
+\end{aligned}
+$$
+
+So, it is clear that we can compute the full conditionals like this:
+$$
+\begin{aligned}
+P(X_\ell = 0~|~Y_\ell = 0) & = \frac{1-p_\ell}{1-p_\ell +  mp_\ell} \\
+P(X_\ell = 1~|~Y_\ell = 0) & = \frac{mp_\ell}{1-p_\ell +  mp_\ell} \\
+P(X_\ell = 2~|~Y_\ell = 0) & = 0 
+\end{aligned}
+$$
+And, it is clear from the way I've set up the model that
+$$
+\begin{aligned}
+P(X_\ell & = 1~|~Y_\ell = 1) = 1 \\
+P(X_\ell & \neq 1~|~Y_\ell = 1) = 0
+\end{aligned}
+$$
+And, finally, we have:
+$$
+\begin{aligned}
+P(X_\ell = 0~|~Y_\ell = 2) & = 0 \\
+P(X_\ell = 1~|~Y_\ell = 2) & = \frac{m(1-p_\ell)}{p_\ell +  m(1-p_\ell)} \\
+P(X_\ell = 2~|~Y_\ell = 2) & = \frac{p_\ell}{p_\ell +  m(1-p_\ell)} \\
+\end{aligned}
+$$
+
+And then finally, we can also write down the probability of the observed data
+given $p$ and $m$.  This is pretty straightforward.  We simply write down the
+marginal probability that $Y_\ell$ is 0, 1, or 2.  And, of course, you observe
+a homozygote if it is truly a homozygote, or if it is a heterozygote that
+had a genotyping error.  So,
+$$
+\begin{aligned}
+P(Y_\ell = 0 | p_\ell, m) & = (1 - p_\ell)^2 + mp(1-p) \\
+P(Y_\ell = 1 | p_\ell, m) & = (1-m)2p(1-p) \\
+P(Y_\ell = 2 | p_\ell, m) & = p_\ell^2 + mp(1-p) \\
+\end{aligned}
+$$
+
+And, so, we can write down the log of the probability of the observed data $N = (N_0, N_1, N_2)$
+as a function of $p = (p_1,\ldots, p_L)$ and $m$.
+$$
+\begin{aligned}
+\log P(N|p, m) = \sum_{\ell = 1}^L\biggl(
+& N_{\ell,0}\log[(1 - p_\ell)^2 + mp(1-p)] + \\
+& N_{\ell,1}\log[(1-m)2p(1-p)] + \\
+& N_{\ell,2}\log[p_\ell^2 + mp(1-p)] \biggr)
+\end{aligned}
+$$
+I suppose that we could eke a little more speed out of this by taking the product of
+powers and then taking only one log.  But it might not make too much difference.
+
+## MCMC algorithm for the Simple Model
+
+Here is how it will go.  First initialize by setting Z to N, and choosing a value of 
+$m$ from its prior, say, uniform on $(0,1)$. Then iterate these three steps that 
+constitute a sweep:
+
+1. Simulate a new value of $p$ via Gibbs sampling.
+2. Do a Metropolis-Hastings update for $m$.  Propose a new value
+from a $\mathrm{Normal}(0, \sigma_m)$.
+3. Simulate a new value for $Z$. This is done by, for each locus, 
+simulating some of the $N_0$ or $N_2$ homozygotes to be truly 
+heterozygotes.  Since each one is a Bernoulli trial, this ends up
+being a binomial. For locus $\ell$ we simulate $A_{\ell, 0}$ and $A_{\ell, 2}$ like so:
+$$
+\begin{aligned}
+A_{\ell,0} & \sim \mathrm{Bin}(N_{\ell, 0};~mp_\ell[1-p_\ell +  mp_\ell]^{-1} ) \\
+A_{\ell,2} & \sim \mathrm{Bin}(N_{\ell, 2};~m(1-p_\ell)[p_\ell +  m(1-p_\ell)]^{-1} )
+\end{aligned}
+$$
+And then we get:
+$$
+\begin{aligned}
+Z_{\ell, 0} & = N_{\ell, 0} - A_{\ell,0} \\
+Z_{\ell, 1} & = N_{\ell, 1} + A_{\ell,0} + A_{\ell,2} \\
+Z_{\ell, 2} & = N_{\ell, 2} - A_{\ell,2} \\
+\end{aligned}
+$$
+And that is it.  Go back to 1 now.
+
+## A Function to Implement MCMC for the Simple Model
+
+We are going to bother implementing this in Rcpp for now, since I think
+most of the operations are quite vectorized, and we ought to be able to
+crank through it in R at an acceptable rate.  The input will be
+the 012 file, and some parameters for the MCMC and priors.
+
+Before the main function we will want to define a helper function or two that we will
+use to return the results.
+```{r}
+#' simulate values for the genotypes given the observed genotype, the est alle freq, and the gtyp error rate
+#' @param D an 012,-1 matrix of observed genotypes
+#' @param p the estimated allele freqs
+#' @param m the genotyping error rate (must be a scalar)
+simulate_genos_from_posterior <- function(D, p, m) {
+  stopifnot(length(m) == 1)
+  
+  glist <- lapply(1:ncol(D), function(i) {
+    obs <- D[, i] # the observed genotypes
+    pl <- p[i]  # the alle freq at locus i
+    post0 <- c(
+      (1 - pl) / (1 - pl + m * pl),  # posterior that observed 0 is truly a 0
+      (m * pl) / (1 - pl + m * pl)   # posterior that observed 0 is truly a 1
+    )
+    post2 <- c(
+      (m * (1 - pl)) / (pl + m * (1 - pl)),  # posterior that observed 2 is truly a 1
+      pl / (pl + m * (1 - pl))               # posterior that observed 2 is truly a 2
+    )
+    obs[obs == 0] <- sample(x = c(0, 1), size = sum(obs == 0), replace = TRUE, prob = post0)
+    obs[obs == 2] <- sample(x = c(1, 2), size = sum(obs == 2), replace = TRUE, prob = post2)
+    obs
+  })
+  
+  # then turn it into a matrix with the same dimensions and dimnames as D
+  ret <- matrix(unlist(glist), nrow = nrow(D))
+  dimnames(ret) <- dimnames(D)
+  ret
+}
+
+
+#' @param dat012 An 012 matrix.  Missing data can be -1 or NA
+#' @param nreps number of MCMC sweeps to do
+#' @param m_init initial starting value for m must be between 0 and 1
+#' @param a0 beta parameter for reference alleles
+#' @param a1 beta parameter for alternate alleles
+#' @param sm standard devation of proposal distribution for m
+estimate_m <- function(dat012,
+                       nreps = 200,
+                       m_init = runif(1),
+                       a0 = 0.5,
+                       a1 = 0.5,
+                       sm = 0.005
+) {
+  
+  stopifnot(m_init > 0 & m_init < 1)
+  
+  D <- dat012
+  D[is.na(D)] <- -1
+  
+  # get the N variables
+  N0 <- colSums(D == 0)
+  N1 <- colSums(D == 1)
+  N2 <- colSums(D == 2)
+  
+  # initialize the Zs to the Ns
+  Z0 <- N0
+  Z1 <- N1
+  Z2 <- N2
+  
+  # make some place to return the m values visited
+  m <- rep(NA, nreps)
+  m[1] <- m_init
+  
+  # then do the sweeps
+  for (r in 2:nreps) {
+    
+    # new estimate of frequency of the "1" allele from Gibbs sampling
+    p <- rbeta(n = length(Z0), 
+               shape1 = a1 + 2 * Z2 + Z1, 
+               shape2 = a0 + 2 * Z0 + Z1)
+    
+    # propose then accept or reject a new value for m
+    mprop <- m[r - 1] + rnorm(1, 0, sm)
+    reject <- TRUE  # reject it unless we don't
+    if (mprop > 0 & mprop < 1) {
+      numer <- sum(N0 * log((1 - p)^2 + mprop * p * (1 - p)) +
+                     N1 * log((1 - mprop) * 2 * p * (1 - p)) +
+                     N2 * log(p ^ 2 + mprop * p * (1 - p)))
+      denom <- sum(N0 * log((1 - p)^2 + m[r - 1] * p * (1 - p)) +
+                     N1 * log((1 - m[r - 1]) * 2 * p * (1 - p)) +
+                     N2 * log(p ^ 2 + m[r - 1] * p * (1 - p)))
+      if (log(runif(1)) < numer - denom) {
+        reject <- FALSE
+      }
+    }
+    if (reject == FALSE) {
+      m[r] <- mprop
+    } else {
+      m[r] <- m[r - 1]
+    }
+    
+    # new values for Z from Gibbs sampling
+    A0 <- rbinom(n = length(N0), size = N0, prob = (m[r] * p) / (1 - p + m[r] * p))
+    A2 <- rbinom(n = length(N2), size = N2, prob = (m[r] * (1 - p)) / (p + m[r] * (1 - p)))
+    
+    Z0 <- N0 - A0
+    Z1 <- N1 + A0 + A2
+    Z2 <- N2 - A2
+    
+  }
+  # return m, and eventually I need to also return the final Zs and the Ns
+  # and I may as well return a new 012 file with "corrected" genotypes, which 
+  # I can make by broadcasting the Zs around, for example...
+  
+  # inferring/realizing/simulating genotypes. I can simulate these from their posterior
+  # given the estimated allele freq and the observed genotype.  To do this I will cycle
+  # over the columns (the snps) in D, and for each one, I will compute the posterior of the
+  # the genotype given the observed genotype (only have to for 0's and 2's) and then I will
+  # sample from those posteriors.  We have a separate function that does this
+  ret <- list()
+  ret$simmed_genos <- simulate_genos_from_posterior(D, p, m[nreps])
+  
+  # compute an overall genotyping error rate
+  diff <- ret$simmed_genos != D
+  diff[D == -1] <- NA
+  ret$overall_geno_err_est <- mean(diff, na.rm = TRUE)
+  
+  # return the trace of m values
+  ret$m <- m
+  
+  ret
+}
+```
+
+### Test it on simulated data with no genotyping error
+
+Let's quickly simulate 10K SNPs and then simulate 40 individuals 
+with no genotyping error.
+```{r}
+p <- read_rds("data/wifl_p_10K.rds")  # 10K markers with frequencies like those in WIFL
+gp <- rbind(p^2, 2 * p * (1 - p), (1 - p) ^ 2)   # genotype freqs
+sim012_no_err <- apply(gp, 2, function(x) sample(x = c(2, 1, 0), size = 40, replace = TRUE, prob = x))
+
+# now see what we get with this data set
+set.seed(5)
+m_est <- estimate_m(sim012_no_err, nreps = 4000)
+mean(m_est$m[-(1:1000)])
+```
+
+So, with that simulated data set, the posterior mean estimate is about 1 out of 1000
+heterozygotes being mistakenly called homozygotes.  That seems good---it is quite low.
+Given that it is constrained to be positive,
+it is not going to be unbiased.
+
+### Try it on extimus - AZ wifls
+
+```{r}
+# get the rad data as an 012 matrix
+wifl <- read_rds("../../wifl-popgen/data/rad/rad_wifl_clean_175_105000.rds")
+
+# get the populations and drop indivs that are not in the clean rad data
+birds <- read_csv("../../wifl-popgen/data/meta/WIFL_Metadata.csv") %>%
+  filter(rad_genotyped == TRUE) %>%
+  mutate(pop = str_replace_all(short_name, "[0-9]*", "")) %>%
+  filter(Field_Number %in% rownames(wifl)) %>%
+  filter(pop == "extAZ") %>%
+  .$Field_Number
+
+# run these guys
+set.seed(76)
+extAZ_m <- estimate_m(wifl[birds, ], nreps = 800)
+plot(extAZ_m$m)
+mean(extAZ_m$m[-(1:400)])
+```
+So, this is telling us that we have a posterior mean estimate of error rate
+that is about 3.8%.  OK...That might actually be close to what you expect given
+RAD allele dropout.  Probably not that high, though...
+
+And, it turns out that we can get an estimate of the consequences of this type 
+of genotyping error rate in the data set.  (Remembering that we are assuming that
+only hets are ever miscalled).  That overall genotyping error rate is:
+```{r}
+extAZ_m$overall_geno_err_est
+```
+
+BTW, that estimate is obtained by imputing the true genotypes given the last-visited values
+of $m$ and $p$, and then seeing how different those are from the observed data.
+
+
+### Try it on some lobster
+
+Let's look at the BUZ population, because that has one of the largest sample sizes.
+```{r}
+lobster012 <- read_012("data/lobster/lobster_rad", gz = TRUE)
+
+BUZ <- tibble(sample = rownames(lobster012)) %>%
+  mutate(pop = str_replace_all(sample, "[^A-Z]*", "")) %>%
+  filter(pop == "BUZ") %>%
+  .$sample
+
+set.seed(19)
+buz_m <- estimate_m(lobster012[BUZ, ], nreps = 2000)
+```
+Now plot that:
+```{r}
+plot(buz_m$m)
+```
+Holy Cow! that's more than 25%!!
+```{r}
+mean(buz_m$m[-(1:500)])
+hist(buz_m$m[-(1:500)])
+```
+
+What does the overal genotyping error rate come out to?
+```{r}
+buz_m$overall_geno_err_est
+```
+Hmmm...only about 5%. That must be because the allele frequencies are quite low and most of the individuals
+at those loci are homozygotes anyway.  So, what this says is that the errors will be concentrated in the loci
+with higher allele frequencies.  
+
+Now, I want to do something fun.  We can do the geno_freq_calcs and plot the raw lobster
+data, and also the data of "imputed/corrected" genotypes to see if it looks any better.
+```{r}
+buz012 <- lobster012[BUZ, ]
+buz_gfc_raw <- geno_freq_calcs(buz012)
+buz_gfc_cor <- geno_freq_calcs(buz_m$simmed_genos)
+
+# then plot the raw ones
+buz_gfc_raw %>%
+  ggplot(., aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.2) +
+  facet_grid(~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+And what about the "corrected" ones:
+```{r}
+buz_gfc_cor %>%
+  ggplot(., aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.2) +
+  facet_grid(~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+
+It doesn't completely fix things, but it improves it.
+
+
+### Mike Miller's Chinook RAD done on the GATK pipeline
+
+Let's have a look at the Prince et al. Chinook data that I ran
+through Kristen's pipeline with bowtie and GATK.  
+```{r}
+chin_gatk <- read_012(prefix = "data/chinook/chinook_gatk", gz = TRUE)
+chin_meta <- read_csv("data/chinook/chinook_table_S6.csv")
+
+# I am going to focus just on the trinity-premature fish cuz that is one
+# of the larger samples
+trin_premies <- chin_meta %>%
+  filter(Location == "Trinity River", `Migration Category` == "Premature") %>%
+  filter(`Sample DNA ID` %in% rownames(chin_gatk)) %>%
+  .$`Sample DNA ID`
+
+chin_trin_premies <- chin_gatk[trin_premies, ]
+
+# now let's run them
+chin_m <- estimate_m(chin_trin_premies, nreps = 1200, m_init = 0.1)
+```
+
+Now, plot that out:
+```{r}
+plot(chin_m$m)
+```
+And our posterior mean estimate is:
+```{r}
+mean(chin_m$m[-(1:200)])
+```
+Wow! An estimated error rate of greater than 50%.  
+
+Gotta keep in mind that I just threw this into the genoscape SNP-calling pipeline
+willy-nilly.  But Kristen's RAD-PE data in the same pipeline coughs up an error rate of
+about 3.8%, so, I think Mike's data probably are pretty lousy.
+
+Of course, we still have to see how ANGSD handles such poor data.
+
+The overall rate of miscalled genotypes from this is:
+```{r}
+chin_m$overall_geno_err_est
+```
+which is pretty darn high.
+
+And now, let's make plots of the "corrected data"
+```{r}
+chin_gfc_raw <- geno_freq_calcs(chin_trin_premies)
+
+chin_gfc_raw %>%
+  ggplot(., aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.005, position = position_jitter(width = 0.02, height = 0.02)) +
+  facet_grid(~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+Oh wow!  It is really good to look at that with a super low alpha value.  
+
+Now, print the corrected ones to see if the model improves things:
+```{r}
+chin_gfc_cor <- geno_freq_calcs(chin_m$simmed_genos)
+
+chin_gfc_cor %>%
+  ggplot(., aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.005) +
+  facet_grid(~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+
+That looks a lot better.
+
+### Western Alaska Chinook
+
+We expect these to have a pretty low estimated $m$.  Let's do 'em, but just
+focus on the Kogrukluk population, because that is the largest sample.
+```{r}
+wak_chin012 <- read_012("data/western_ak_chinook/wak", gz = TRUE)
+wak_chin_pops <- tibble(sample = rownames(wak_chin012)) %>%
+  mutate(pop = str_extract(sample, "^[a-zA-Z]*"))
+kogruk <- wak_chin_pops %>%
+  filter(pop == "Kogrukluk") %>%
+  .$sample
+
+# estimate m
+wak_chin_m <- estimate_m(wak_chin012[kogruk, ], nreps = 2500, m_init = 0.1)
+```
+Plot it:
+```{r}
+plot(wak_chin_m)
+```
+And the posterior mean estimate of $m$ is:
+```{r}
+mean(wak_chin_m[-(250:2500)])
+```
+
+So, these guys are doing pretty well.  Great!
+
+## Prince et al Steelhead
+
+I have some filtered SNPs.  Let's have a look:
+```{r}
+mykiss <- read_012("data/prince_steelhead/full-omyV6-filtered", gz = TRUE)
+
+mykiss_meta <- read_csv("data/prince_steelhead/steelhead_meta.csv")
+
+myk_pops <- tibble(sample = rownames(mykiss)) %>%
+  left_join(mykiss_meta, by = c("sample" = "Sample DNA ID")) %>%
+  mutate(pop = str_c(Location, "--", `Migration Category` )) %>%
+  select(sample, pop)
+
+eelRP <- myk_pops %>%
+  filter(pop == "Eel River--Premature") %>%
+  .$sample
+```
+
+Let's make a picture:
+```{r}
+eelRP012 <- mykiss[eelRP, ]
+geno_freq_calcs(eelRP012) %>%
+  ggplot(., aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.005) +
+  facet_grid(~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+
+```
+Then run it:
+```{r}
+mykiss_m <- estimate_m(mykiss[eelRP, ], nreps = 500, m_init = 0.1)
+```
+And plot it:
+```{r}
+plot(mykiss_m)
+```
+
+That is unexpected.  What is going on there?  
+```{r}
+eelP012 <- mykiss[eelRP, ] 
+
+hist(colSums(eelP012 != -1))
+```
+
+So, there are not a whole lot of samples that are not missing data.  And it might be that the
+number of paralogs is quite great.  So, we should add paralogs into the mix.
+
+## Adding a category for paralogs (Not pursued further)
+
+There are clearly some loci with way too many heterozygotes.  I have looked at those in WIFLs and I think that
+I have a nice simple way to model them.  
+
+### Simple paralog model
+
+We allow for two categories of paralogous pairs of loci. (We use paralogous here to mean loci which
+are in different places in the actual genome, but which align to the same place in the reference that is used
+to align the short reads.)  Every set of paralogs in our model will contain only two distinct loci in the 
+genome.  One of those will be fixed and the other segregating polymorphism.  And then we include a term, $\epsilon$,
+that applies to all paralogous loci which is the rate at which homozygotes of the non-fixed paralog
+occur in the observed data.  We will name these two paralogous pair categories Fixed-Ref and Fixed-Homoz,
+telling us whether the fixed locus is fixed for the reference allele or for the alternate allele.  The
+frequency of the ALT (1) allele at the non-fixed member of paralog-pair $d$ will be denoted $p_d$. And
+we will allow that there are $D$ paralog-pairs in our data (at a particular sweep of the MCMC.)
+
+Given this simple model we can easily write down the probability of observing the genotype
+that we do at a locus which is a paralogous-pair locus.  For these paralogous pairs we will
+assume that if an allele is present it will be picked up in a short read and included whilst
+inferring the observed genotype. Obviously there will be cases in which reads are not obtained
+from one of the paralogs, or from one of the alleles in the paralog that is segregating variation
+at the SNP; however we aren't going to worry about modeling that.  All it will do is affect the 
+estimate of $p_d$ which we are not really interested in for the paralogs at the moment anyway.
+Also, the $\epsilon$ term will sop up most of that variation.  The paralogs are really
+a nuisance here---we just want to identify them so that we don't include them in the calculation
+of the Het-to-Hom genotyping error rate.
+Thus, we have:
+$$
+\begin{aligned}
+P(X_d = 0~|~\mbox{Fixed-Ref}, p_d) & = (1-\epsilon)(1-p_d) & ~~~~~~~~~~~~~~~~~~~  P(X_d = 0~|~\mbox{Fixed-Alt}, p_d) & = \epsilon \\
+P(X_d = 1~|~\mbox{Fixed-Ref}, p_d) & = (1-\epsilon)p_d & ~~~~~~~~~~~~~~~~~~~  P(X_d = 1~|~\mbox{Fixed-Alt}, p_d) & = (1-\epsilon)(1 - p_d) \\
+P(X_d = 2~|~\mbox{Fixed-Ref}, p_d) & = \epsilon & ~~~~~~~~~~~~~~~~~~~  P(X_d = 2~|~\mbox{Fixed-Alt}, p_d) & = (1-\epsilon)p_d \\
+\end{aligned}
+$$
+
+### Metropolis-Hastings Updates between Paralog / Non-paralog categories
+
+After a little thought on this one, I decided that it will be easiest to update
+these using MH-sampling in which we also have to propose new values of $p_d$ (for
+jumping to the paralogous states) or $p_\ell$ (for jumping to the non-paralogous
+state.)  I will be able to prepare some better theory (based on variances or information)
+on what the appropriate proposal distribution for the $p_\ell$'s or $p_d$'s should be, but 
+I think that for now it will be sufficient to just make it simple.
+
+#### Proposing to move into the paralogous categories
+
+At any locus we will have the _observed_ counts of the different genotypes, $N_0$, $N_1$, and $N_2$.  
+To propose the allele frequency in a paralog pair, it is easy to see that if you 
+focus only on the genotypes that are not "error-homozygotes" that each genotype you 
+get is a Bernoulli trial with parameter $p_d$.  BAM! That means we can simulate the
+proposed $p_d$ from a beta.  Let's say the prior on $p_d$ is $\mathrm{Beta}(1/2, 1/2)$,
+then a good proposal distribution for jumping to the paralogous model will be, for the Fixed-Ref
+case:
+$$
+q(p_d | \boldsymbol{N}_d) \sim \mathrm{Beta}(\frac{1}{2} + N_1, \frac{1}{2} + N_0)
+$$
+and for the Fixed-Alt case we will have
+$$
+q(p_d | \boldsymbol{N}_d) \equiv \mathrm{Beta}(\frac{1}{2} + N_2, \frac{1}{2} + N_1).  
+$$
+That should do it.  What is nice is that this proposal distribution is a little more spread out than 
+the actual full conditional, so it shouldn't penalize the backward moves too much if the allele frequency
+is a little outside that.  
+
+#### Proposing a $p_\ell$ for jumping to non-paralogous state
+
+This is where I could do some more theory to get the best proposal distribution,
+but that will come later.  For now, I will just wing it with what seems reasonable.
+Again, we every locus we will alwyas have at our disposal the _observed_ genotype counts, 
+$\boldsymbol{N}_\ell = (N_{\ell,0}, N_{\ell,1}, N_{\ell,2})$.  If the current genotyping
+error rate is estimated to me $m$, then we expect that the correct number
+of heterozygotes would have been $N_{\ell,1}/m$. So that the number of genotypes
+that were called incorrectly is $(1/m - 1)N_{\ell,1}$.  The allele frequency
+estimated from the incorrect data (under the model) will still have the correct
+expectation, but it will have slightly higher variance.  But even if all
+the heterozygotes were called incorrectly the variance won't be infinite---it will
+be at most the equivalent of having a sample size that is half of what it should be.  
+In other words, even if $m=1$ and you expect 50% heterozygotes ($p=1/2$), your effective
+sample size is still about 3/4 what it was before. If, on the other hand, you would expect
+25% heterozygotes, then your effective sample size, with $m=1$, would be closer to
+$7/8$, I believe.  The trick here is to recognize that a homozygote observed because
+it is a heterozygote that was incorrectly called does not count as 2 gene copies 
+observed---it counts more like one gene copy observed.  
+
+So, this is how we will go about it:
+
+1. estimate the allele frequency at the locus:
+$\hat{p} = (2N_2 + N_1) / 2N$, where $2N = 2(N_0 + N_1 + N_2)$ is
+the number of gene copies.
+2. From that, compute the expected fraction of heterozygotes: $H = 2\hat{p}(1-\hat{p})$
+3. Estimate your effective sample size of gene copies as $2N_\mathrm{eff} = 2N(1 - \frac{mH}{2})$ 
+
+So, for example, if $m=.5$ and $\hat{p}=0.5$, then $H = 0.5$ and the effective number of 
+gene copies is $2N(1 - \frac{1}{8})$.  If the genotyping error rate were 1 then we would have
+3/4 the original size.  At any rate, we will propose the new allele frequncy from a beta
+distribution:
+$$
+q(p_\ell | \boldsymbol{N}) \equiv \mathrm{Beta}(2N_\mathrm{eff}\hat{p}, 2N_\mathrm{eff}(1 - \hat{p}))
+$$
+
+
+#### Hastings Ratios
+
+These are pretty easy to compute, they are just the probabilities of the observed
+genotypes given the allele frequencies, and the error rates.
+
+
+
+## A Function to Implement MCMC for the Simple Model with Paralogs
+
+We are just going to modify the original function.  I started working on this, but then
+I started to think that it is probably going to be better to toss out everything
+that is significantly our of HWE with heterozygote excesses.  The problem is that with
+small number of non-missing individuals at any locus it is really hard to distinguish between
+the paralogous and the non-paralogous model.  
+```{r}
+#' @param dat012 An 012 matrix.  Missing data can be -1 or NA
+#' @param nreps number of MCMC sweeps to do
+#' @param m_init initial starting value for m must be between 0 and 1
+#' @param a0 beta parameter for reference alleles
+#' @param a1 beta parameter for alternate alleles
+#' @param sm standard devation of proposal distribution for m
+estimate_m_para <- function(dat012,
+                            nreps = 200,
+                            m_init = runif(1),
+                            epsilon_init = 0.1,
+                            a0 = 0.5,
+                            a1 = 0.5,
+                            sm = 0.005,
+                            minN = 6,
+                            minMaf = 0.05
+) {
+  
+  stopifnot(m_init > 0 & m_init < 1)
+  
+  D <- dat012
+  D[is.na(D)] <- -1
+  
+  # get the N variables
+  N0 <- colSums(D == 0)
+  N1 <- colSums(D == 1)
+  N2 <- colSums(D == 2)
+  
+  # drop the ones that don't have enough samples
+  D <- D[, N0 + N1 + N2 >= minN]
+  N0 <- colSums(D == 0)
+  N1 <- colSums(D == 1)
+  N2 <- colSums(D == 2)
+  
+  # now drop the ones that have MAF too low
+  phat <- (2 * N2 + N1) / (2 * (N0 + N1 + N2))  # estimate of allele frequencies
+  D <- D[, phat > minMaf]
+  N0 <- colSums(D == 0)
+  N1 <- colSums(D == 1)
+  N2 <- colSums(D == 2)
+  phat <- (2 * N2 + N1) / (2 * (N0 + N1 + N2))  # estimate of allele frequencies
+  
+  
+  # initialize the Zs to the Ns
+  Z0 <- N0
+  Z1 <- N1
+  Z2 <- N2
+  
+  # make some place to return the m values visited
+  m <- rep(NA, nreps)
+  m[1] <- m_init
+  
+  # initialize epsilon
+  epsilon <- rep(NA, nreps)
+  epsilon[1] <- epsilon_init
+  
+  # initially assign loci to the different categories using what is kind of like a 
+  # Gibbs step using the proposals.  These are the phats
+  H <- 2 * phat * (1 - phat)
+  Neff <- 2 * (N0 + N1 + N2) * (1 - m[1] * H / 2)
+  
+  # now propose the allele freqs
+  p_np <- rbeta(n = length(Z0), shape1 = a0 + phat * Neff, shape2 = a1 + (1 - phat) * Neff)  # no-paralog model
+  p_fr <- rbeta(n = length(Z0), shape1 = a0 + N1, shape2 = a1 + N0)  # fixed-ref paralog model
+  p_fa <- rbeta(n = length(Z0), shape1 = a0 + N2, shape2 = a1 + N1)  # fixed-alt paralog model
+  
+  # now, for each model (np, fr, or fa) we compute the log probabilities of the observed data given the proposed p's at each locus
+  logP_np <- N0 * log((1 - p_np)^2 + m[1] * p_np * (1 - p_np)) +
+    N1 * log((1 - m[1]) * 2 * p_np * (1 - p_np)) +
+    N2 * log(p_np ^ 2 + m[1] * p_np * (1 - p_np))
+  
+  logP_fr <- N0 * log((1 - epsilon[1]) * (1 - p_fr)) + 
+    N1 * log((1 - epsilon[1]) * p_fr) +
+    N2 * log(epsilon[1])
+  
+  logP_fa <- N0 * log(epsilon[1]) + 
+    N1 * log((1 - epsilon[1]) * (1 - p_fa)) +
+    N2 * log((1 - epsilon[1]) * p_fa) 
+  
+  
+  # now, just while developing these things, let's look at what we have
+  non_para_post <- exp(logP_np) / (exp(logP_fr) + exp(logP_fa) + exp(logP_np))
+  gfc <-  geno_freq_calcs(D)
+  gfcp <- enframe(non_para_post, name = "snp", value = "loglP") %>%
+    left_join(gfc, .)
+  
+  # then do the sweeps
+  for (r in 2:nreps) {
+    
+    # new estimate of frequency of the "1" allele from Gibbs sampling
+    p <- rbeta(n = length(Z0), 
+               shape1 = a1 + 2 * Z2 + Z1, 
+               shape2 = a0 + 2 * Z0 + Z1)
+    
+    # propose then accept or reject a new value for m
+    mprop <- m[r - 1] + rnorm(1, 0, sm)
+    reject <- TRUE  # reject it unless we don't
+    if (mprop > 0 & mprop < 1) {
+      numer <- sum(N0 * log((1 - p)^2 + mprop * p * (1 - p)) +
+                     N1 * log((1 - mprop) * 2 * p * (1 - p)) +
+                     N2 * log(p ^ 2 + mprop * p * (1 - p)))
+      denom <- sum(N0 * log((1 - p)^2 + m[r - 1] * p * (1 - p)) +
+                     N1 * log((1 - m[r - 1]) * 2 * p * (1 - p)) +
+                     N2 * log(p ^ 2 + m[r - 1] * p * (1 - p)))
+      if (log(runif(1)) < numer - denom) {
+        reject <- FALSE
+      }
+    }
+    if (reject == FALSE) {
+      m[r] <- mprop
+    } else {
+      m[r] <- m[r - 1]
+    }
+    
+    # new values for Z from Gibbs sampling
+    A0 <- rbinom(n = length(N0), size = N0, prob = (m[r] * p) / (1 - p + m[r] * p))
+    A2 <- rbinom(n = length(N2), size = N2, prob = (m[r] * (1 - p)) / (p + m[r] * (1 - p)))
+    
+    Z0 <- N0 - A0
+    Z1 <- N1 + A0 + A2
+    Z2 <- N2 - A2
+    
+  }
+  # return m, and eventually I need to also return the final Zs and the Ns
+  # and I may as well return a new 012 file with "corrected" genotypes, which 
+  # I can make by broadcasting the Zs around, for example...
+  m
+}
+```
+
+

@@ -1,0 +1,481 @@
+---
+title: "A Hasty Survey of Genotype Freqs in RAD Data"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+---
+
+I am going to quickly go through a few data sets to see what sorts of patterns we 
+observe between the observed and expected frequencies of genotypes in RAD data sets.  For now, I am just
+going to go through Dryad and get VCF files for RAD data sets.  And I might use 
+some of our own.
+
+Load some libraries:
+```{r}
+library(genoscapeRtools)
+library(stringr)
+library(tidyverse)
+```
+
+## WIFL
+
+Let's go ahead of look at the WIFL data here. This is data that Kristen has collected using 
+RAD-PE sequencing, and she has been super careful about the sequencing.
+It is 105,000 SNPs in about 175 birds from a number of different sampling locations. 
+These data have not yet been subject to filters for H-W disequilibrium, which is why
+the loci with far too many heterozygotes show up (probably duplicated loci or paralogs, etc.)
+
+```{r}
+# get the rad data as an 012 matrix
+wifl <- read_rds("../../wifl-popgen/data/rad/rad_wifl_clean_175_105000.rds")
+
+# get the populations and drop indivs that are not in the clean rad data
+meta <- read_csv("../../wifl-popgen/data/meta/WIFL_Metadata.csv") %>%
+  filter(rad_genotyped == TRUE) %>%
+  mutate(pop = str_replace_all(short_name, "[0-9]*", "")) %>%
+  filter(Field_Number %in% rownames(wifl))
+```
+
+Populations were defined according to the short-name used for them.  Let's count them up:
+```{r}
+meta %>%
+  count(pop)
+```
+
+OK, let's retain only individuals from pops with 17 or more samples. We do that by just
+setting their pop to NA
+```{r}
+pops <- meta %>%
+  group_by(pop) %>%
+  mutate(popn = ifelse(n() >= 17, pop, NA)) %>%
+  ungroup() %>%
+  select(popn, Field_Number) %>%
+  rename(pop = popn,
+         sample = Field_Number)
+  
+```
+
+
+```{r}
+wifg <- geno_freq_calcs(wifl, pops) 
+
+```
+
+Now, let's plot it. This takes a while because there are a lot of SNPs, but let's do 
+all of them, rather than subsampling, like I did before
+```{r wifl, fig.width=6, fig.height=7}
+wifg %>%
+  ggplot(., aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.01) +
+  facet_grid(pop ~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+
+That is interesting to see. It looks especially good for the larger sample of extAZ.  There are clearly some markers
+that have way too many heterozygotes.  But for the most part the values are nicely around the y=x line.  
+
+## What should these things look like?
+Let's take 105,000 SNP allele frequencies from the wifl data in the extAZ population, and then sample genotypes
+under H-W from it: one sample of 
+40 diploids and another of 20.
+```{r}
+# these are allele freqs, each one repeated three times
+p <- wifg %>%
+  filter(pop == "extAZ") %>%
+  .$p
+p <- p[!near(p, 0.0)]  # drop monomorphic loci, leaving us with 77,787
+
+# take only every third (as they are each repeated three times.)
+p <- p[c(T, F, F)]
+
+# now compute the genotype frequencies. Recall that p is the frequency
+# of the 1 allele, so let's make a matrix of probabilities
+gp <- rbind((1 - p) ^ 2, 
+            2 * p * (1 - p),
+            p ^ 2)
+
+set.seed(123)
+
+# now simulate 40 diploids
+og40 <- apply(gp, 2, function(x) rmultinom(n = 1, size = 40, prob = x))
+
+# and 20 diploids
+og20 <- apply(gp, 2, function(x) rmultinom(n = 1, size = 20, prob = x))
+
+# and put it all into a tibble
+sim_geno <- tibble(
+  pop = rep(c("n = 40", "n = 20"), each = length(og40)),
+  sim_p = rep(rep(p, each = 3), times = 2),
+  snp = rep(rep(1:ncol(og40), each = 3), times = 2),
+  ntot = rep(c(40, 20), each = length(og40)),
+  geno = as.character(rep(c(0, 1, 2), times = 2 * ncol(og40))),
+  sim_p_exp = rep(as.vector(gp), times = 2),
+  n_obs = c(as.vector(og40), as.vector(og20))
+) %>%
+  group_by(pop, snp) %>%
+  mutate(p_obs = n_obs / ntot)
+
+# OK, but now we need to actually get the estimate of p from the 
+# observed genotypes, and from that, compute p_exp.
+sim_geno2 <- sim_geno %>%
+  group_by(pop, snp) %>%
+  mutate( p = (2 *  n_obs[3] + n_obs[2]) / (2 * ntot[1])) %>%
+  mutate(p_exp = c((1 - p[1]) ^ 2, 2 * p[1] * (1 - p[1]), p[1] ^ 2))
+  
+
+```
+
+Finally, let's plot those:
+```{r simmed, fig.width=6, fig.height=3}
+sim_geno2 %>%
+  ggplot(., aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.01) +
+  facet_grid(pop ~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+So, that is what data with either 20 or 40 individuals should look like with no 
+genotyping error in which heterozygotes are miscalled as homozygotes.  Keep that in mind
+as we look at some published data sets.
+
+
+## Lobster
+
+I made an 012 file of this.  Let's read it in, and we will assume that the three letter
+codes in the name give the locations they were sampled from so we will make a pops file from
+that.
+```{r}
+lobster012 <- read_012("data/lobster/lobster_rad", gz = TRUE)
+
+lob_pops <- tibble(sample = rownames(lobster012)) %>%
+  mutate(pop = str_replace_all(sample, "[^A-Z]*", ""))
+
+# and count em up:
+count(lob_pops, pop)
+```
+
+That is enough to look at the expected and observed geno freqs for everyone.  Let's do it,
+and plot them.
+```{r}
+lob_genos <- geno_freq_calcs(lobster012, lob_pops)
+```
+
+```{r lobster, fig.width=6, fig.height=12}
+ggplot(lob_genos, aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.01) +
+  facet_grid(pop ~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+
+That is pretty poor looking.  Just for fun, we could plot the Z-scores for the different genotypes. 
+```{r lobster-z, fig.width=6, fig.height=12}
+normo <- tibble(z_score = rnorm(10^5))
+ggplot(lob_genos, aes(x = z_score, colour = geno)) +
+  geom_density(data = normo, colour = "black") +
+  geom_density() +
+  facet_grid(pop ~ geno)
+```
+
+So, that is interesting.  Looking pretty bad, I gotta say. It shows that ther are way too many 
+homozygotes of both alleles, and not nearly enough heterozygotes.
+
+## Mediterranean Anchovy
+
+Let's see how these fare.  They are single end RAD.
+The original paper was in molecular ecology [here](http://onlinelibrary.wiley.com.oca.ucsc.edu/doi/10.1111/mec.13627/full).
+
+```{r}
+ancho012 <- read_012("data/med_anchovy/anchovy_rad", gz = TRUE)
+
+ancho_pops <- tibble(sample = rownames(ancho012))  %>%
+  mutate(pop = str_sub(sample, 5, 7))
+
+# count em
+ancho_pops %>%
+  count(pop)
+```
+
+Then do it up:
+```{r ancho, fig.width=6, fig.height=4}
+ancho_genos <- geno_freq_calcs(ancho012, ancho_pops)
+
+ggplot(ancho_genos, aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.05) +
+  facet_grid(pop ~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+Not looking so good there...profound homozygote excesses.
+
+
+## White-sided and white-beaked dolphins
+
+The data on dryad are [here](http://datadryad.org/resource/doi:10.5061/dryad.sd28r).
+
+The original paper is in MER [here](http://onlinelibrary.wiley.com.oca.ucsc.edu/doi/10.1111/1755-0998.12427/full).  Almost 53,000 SNPs in two species of dolphin.  Cool.  This looks like it is RAD single end.
+
+The data are 84 Mb in a VCF.  Here is a quick digression: why the heck do people not gzip these things? That gets
+it down to 3.8 Mb.  Come on, people!  WTF?!  I also feel like someone at Dryad should be enforcing compression.  
+I guess maybe they are worried that there won't be decompression algorithms
+around to decompress them way off into
+the future...but the more I think about it, the more I think that is balderdash.  Just
+compress it already...
+
+```{r}
+dolphin012 <- read_012("data/dolphin/dolphin_rad", gz = TRUE)
+```
+Here's another rant...Why do people not put sample information in
+their data archives?  Seriously, I have to
+go and scrape Table S1 out of a Word Document to associate sample
+names with species...OK, that turned
+out to not be too hard...Wait! No, it was a s**tshow!
+There are crazy asterisks in there and there are breaks
+in some rows, and it takes a lot
+of sleuthing to make sure things have been parsed correctly.  Agh! And there are breaks and spaces in the sample
+names and all sorts of problems...Agh!! There are sample names that just mismatch because they have an M in 
+one file and not in the other!  I finally fixed them all, though.
+```{r}
+dolph_samps <- read_tsv("data/dolphin/dolphin_samples.tsv")
+
+# check to see if there are any name mismatches
+setdiff(rownames(dolphin012), dolph_samps$sample)
+```
+Those were rownames in the 012 matrix that we don't have in the samples. But I have fixed
+them all now, so it is OK.
+
+```{r}
+setdiff(dolph_samps$sample, rownames(dolphin012))
+```
+
+That was lame..but we have what we need:
+```{r}
+dolph_pops <- dolph_samps %>%
+  rename(pop = Species)
+
+# now count up geno freqs:
+dolph_genos <- geno_freq_calcs(dolphin012, dolph_pops)
+```
+
+Now, plot that and see what we get:
+```{r dolphin, fig.width=6, fig.height=4}
+ggplot(dolph_genos, aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.05) +
+  facet_grid(pop ~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+
+Those have to be some of the worst I have seen yet.  I should go back and read the
+paper and see if they mention this pattern.  Perhaps so---the paper is just
+introducing some SNPs.
+
+
+## Mike Miller's Chinook
+
+So, I have some chinook data from the Prince et al paper.  I ran these through 
+our bowtie/GATK pipeline some time ago to recreate their association test. My recollection
+is that these were single-end, and that they were kinda ugly when I plotted out the 
+missing data levels with genoscapeRtools.  Now, I want to have another look at these.
+Ultimately I would like to
+get a hold of Prince's VCF file with the genotype posteriors from
+ANGSD to see if using ANGSD can alleviate the problem (or not).  It turns out they don't
+supply a VCF file, so I will just follow their pipeline, align things, and then use
+ANGSD with their settings to create a VCF file.
+
+SNP calling in the chinook data is chronicled [here](https://github.com/eriqande/genoscape-bioinformatics/blob/master/user-notes/eric-anderson/step-by-step-chinook.md).  It looks like we have about 56K SNPs in 250 individuals
+after light filtering. That VCF is on my laptop at: 
+`/Users/eriq/Documents/git-repos/genoscape-bioinformatics/chinook-scripts/plink/chinook-light.recode.vcf.gz`
+
+I will make an 012 file out of it.
+```sh
+2017-08-21 12:30 /chinook/--% (master) pwd
+/Users/eriq/Documents/git-repos/con-gen-2017/explorations/data/chinook
+2017-08-21 12:31 /chinook/--% (master) ulimit -n 3000
+2017-08-21 12:31 /chinook/--% (master) vcftools --gzvcf /Users/eriq/Documents/git-repos/genoscape-bioinformatics/chinook-scripts/plink/chinook-light.recode.vcf.gz  --012 --out chinook_gatk
+
+VCFtools - v0.1.12b
+(C) Adam Auton and Anthony Marcketta 2009
+
+Parameters as interpreted:
+	--gzvcf /Users/eriq/Documents/git-repos/genoscape-bioinformatics/chinook-scripts/plink/chinook-light.recode.vcf.gz
+	--012
+	--out chinook_gatk
+
+Using zlib version: 1.2.5
+After filtering, kept 250 out of 250 Individuals
+Writing 012 matrix files ... Done.
+After filtering, kept 56220 out of a possible 56220 Sites
+Run Time = 4.00 seconds
+
+2017-08-21 12:32 /chinook/--% (master) gzip chinook_gatk.012
+```
+Now, first, let's look at levels of missing data.
+```{r}
+chin_gatk <- read_012(prefix = "data/chinook/chinook_gatk", gz = TRUE)
+indv <- miss_curves_indv(chin_gatk)
+indv$plot
+```
+
+So, that is not looking very good.  But we will just do the genotype frequency
+calcs without any further filtering.  
+
+We need to break these fish into their different populations.  I have that information
+from one of the summary tables in the first Prince et al. Biorxiv submission. 
+```{r}
+chin_meta <- read_csv("data/chinook/chinook_table_S6.csv")
+
+# and count up how many we have
+chin_meta %>% count(Location, `Migration Category`)
+```
+
+So, let's break them into population and migration category groups first, keeping only 
+those with at least 16 fish in them:
+```{r}
+chin_pops1 <- chin_meta %>%
+  mutate(pop = str_c(Location, `Migration Category`, sep = " - ")) %>%
+  group_by(pop) %>% 
+  filter(n() > 15) %>%
+  rename(sample = `Sample DNA ID`) %>%
+  select(pop, sample) %>%
+  arrange(pop, sample) %>%
+  ungroup() %>%
+  filter(sample %in% rownames(chin_gatk))  # only keep those we have data for
+
+count(chin_pops1, pop)
+```
+
+
+Now we should be able to do it:
+```{r}
+chin_genos <- geno_freq_calcs(chin_gatk, pops = chin_pops1)
+```
+And try plotting...
+```{r chin_pops1, fig.width=6, fig.height=12}
+ggplot(chin_genos, aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.01) +
+  facet_grid(pop ~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+
+
+
+That is looking pretty bad.  It seems like there are some heterozygote deficiencies and also 
+a number of homozygotes that are on what appears to be the max-homozygote line.  But that might be due to the fact that the effective sample size for many loci is quite small because there is so much missing data.
+
+It turns out that when you estimate the genotyping error rate for heterozygotes, it is 
+up around 52%...so, it's pretty bad.  See my R-notebook, "Estimating Genotyping Error by Departures from H-W equlibrium" for more info on that.  
+
+
+## Larson et al Western Alaska Chinook
+
+Yo! Can we get back to something that doesn't look so bad? Yes, I think so.
+I have previously made genotype-frequency plots of the Larson et al. Western
+Alaska Chinook RAD data.  Ryan Waples was involved in that project, and my recollection
+is that it looked pretty solid.  The original paper is
+[here](http://onlinelibrary.wiley.com/doi/10.1111/eva.12128/full)
+and I grabbed the data from Dryad. So, let's try it out.
+
+I previously parsed their genepop file (note to self---don't ever archive RAD SNP data
+in Genepop format. Garbage!  Use vcf), which was a major headache, into an 012 file
+here:  
+`/Users/eriq/Documents/git-repos/snppickr/development/western-alaska-chinook.Rmd`  
+We can just use that 012 file for now.  I have put the 012 files into
+`./explorations/data/western_ak_chinook/` in this repo.
+
+Go for it. Get the 012 file:
+```{r}
+wak_chin012 <- read_012("data/western_ak_chinook/wak", gz = TRUE)
+```
+
+And let us assume that the first part of the sample names gives the pops:
+```{r}
+wak_chin_pops <- tibble(sample = rownames(wak_chin012)) %>%
+  mutate(pop = str_extract(sample, "^[a-zA-Z]*"))
+
+# count em:
+wak_chin_pops %>%
+  count(pop)
+```
+Then tally the genos:
+```{r}
+wak_chin_genos <- geno_freq_calcs(wak_chin012, wak_chin_pops)
+```
+So, make a plot:
+```{r wak_chin_pops1, fig.width=6, fig.height=12}
+ggplot(wak_chin_genos, aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.05) +
+  facet_grid(pop ~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+
+This looks a good deal better than most of what we have seen.  It is on a par
+with Kristen's WIFL data (actually slightly lower $m$ values.)
+It also looks to me like they have filtered the heterozygote excess cases and 
+possibly some extreme homozygote excess cases
+as well.
+
+## Mike Miller's Steelhead
+
+The chinook data was prepared with two different library preps, so I 
+might not have accounted for that properly when doing the bioinformatics
+using bowtie and GATK.  But I also ran through his steelhead data.  Let's see 
+how that looks.
+
+Going back to my notes I find that I did filtering like this:
+
+1. No indels
+1. Biallelic only
+1. Minor allele frequency > 0.01
+1. minimum genotype quality = 30
+1. minimum depth = 8
+1. called in at least 10% of indivs
+
+We only require it be called in 10% of individuals because when I required 50% we got <1000 sites. 
+
+I have put those data in the repo here now.  Let's get em:
+```{r}
+mykiss <- read_012("data/prince_steelhead/full-omyV6-filtered", gz = TRUE)
+
+indv <- miss_curves_indv(mykiss)
+indv$plot
+```
+
+That is what I remember...profoundly bad data quality.
+
+Now, let us get the meta data:
+```{r}
+mykiss_meta <- read_csv("data/prince_steelhead/steelhead_meta.csv")
+
+myk_pops <- tibble(sample = rownames(mykiss)) %>%
+  left_join(mykiss_meta, by = c("sample" = "Sample DNA ID")) %>%
+  mutate(pop = str_c(Location, "--", `Migration Category` )) %>%
+  select(sample, pop)
+
+myk_pops %>%
+  count(pop)
+```
+
+OK, let's count genotypes here:
+```{r}
+myk_geno <- geno_freq_calcs(mykiss, myk_pops)
+```
+And then plot them:
+```{r steelhead1, fig.width=6, fig.height=12}
+ggplot(myk_geno, aes(x = p_exp, y = p_obs, colour = geno)) +
+  geom_jitter(alpha = 0.005, position = position_jitter(width = 0.02, height = 0.02)) +
+  facet_grid(pop ~ geno) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")
+```
+
+That looks pretty bad.  It looks like eel-river premature is our best best
+for sample size.  So, we will run that through our error estimator.  However, something that
+is quite clear when we look at these data is that it appears that the paralog problem
+is incredibly problematic.  It looks like the majority of points here occur right 
+on the line of theoretical minimum for homozygotes.  I should make a quick function
+in genoscape Rtools that creates a data frame of points to plot those boundaries.  
+
+I'm pretty sure that I could come up with a simple sort of estimation procedure that
+uses the number of occurrences on that boundary to estimate the number of duplicated loci
+(or two or more loci that map to the same sinble location in the reference.)  What I am going
+to do before that is call SNPs in the mykiss using ANGSD.
+
+
+

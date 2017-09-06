@@ -1,0 +1,13 @@
+
+VCFtools - v0.1.12b
+(C) Adam Auton and Anthony Marcketta 2009
+
+Parameters as interpreted:
+	--vcf MED_mac_1.vcf
+	--012
+	--out anchovy_rad
+
+After filtering, kept 48 out of 48 Individuals
+Writing 012 matrix files ... Done.
+After filtering, kept 6554 out of a possible 6554 Sites
+Run Time = 0.00 seconds

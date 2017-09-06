@@ -1,0 +1,215 @@
+---
+title: "WIFL PCAs by full GATK pipeline and subsampled ANGSD"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+---
+
+This is a quick little notebook where I take the output from the ngsCovar function
+after subsampling the WIFLs and see how it compares with what we did with the
+full GATK pipeline without subsampling.
+
+
+
+```{r}
+# load some libs
+library(genoscapeRtools)
+library(stringr)
+library(tidyverse)
+library(SNPRelate)
+```
+
+
+## Getting colors on the ANGSD PCA
+
+They provide a script to plot things.  I am going to rewrite that as a 
+function.
+```{r pca-func}
+#' @param in_file the file that has the covariance matrix in it
+#' @param annot_file Annotation file with individual classification
+#' (2 column TSV with ID and CLUSTER)
+#' @param comp Two numbers separated by a dash giving the PCs you want to plot against
+#' one another
+angsd_pca <- function(in_file, annot_file, comp, returnData = FALSE) {
+  # Read input file
+  covar <- read.table(in_file, stringsAsFact = FALSE)
+  
+  # Read annot file
+  # note that plink cluster files are usually tab-separated instead
+  annot <- read.table(annot_file, sep = " ", header = TRUE) 
+  
+  # Parse components to analyze
+  comp <- as.numeric(strsplit(comp, "-", fixed = TRUE)[[1]])
+  
+  # Eigenvalues
+  eig <- eigen(covar, symm = TRUE);
+  eig$val <- eig$val/sum(eig$val);
+  #cat(signif(eig$val, digits = 3) * 100,"\n");
+  
+  # Plot
+  PC <- as.data.frame(eig$vectors)
+  colnames(PC) <- gsub("V", "PC", colnames(PC))
+  PC$Pop <- factor(annot$CLUSTER)
+  
+  if (returnData == TRUE) {
+    return(as_tibble(PC))
+  }
+  
+  title <- paste("PC",comp[1]," (",signif(eig$val[comp[1]], digits=3)*100,"%)"," / PC",comp[2]," (",signif(eig$val[comp[2]], digits=3)*100,"%)",sep="",collapse="")
+  
+  x_axis = paste("PC",comp[1],sep="")
+  y_axis = paste("PC",comp[2],sep="")
+  
+  g <- ggplot() + 
+    geom_point(data=PC, aes_string(x=x_axis, y=y_axis, color="Pop")) + 
+    ggtitle(title)
+  
+  g
+}
+```
+test it here:
+```{r}
+angsd_pca(in_file = "data/wifl-stuff/angsd-results/ALL.covar", 
+          annot_file = "data/wifl-stuff/angsd-results/ALL.clst",
+          comp = "1-2")
+```
+
+Now we need to color individuals by population.  So, let's test just get the data out:
+```{r}
+aPC <- angsd_pca(in_file = "data/wifl-stuff/angsd-results/ALL.covar", 
+          annot_file = "data/wifl-stuff/angsd-results/ALL.clst",
+          comp = "1-2", 
+          returnData = TRUE)[, 1:10]  # just get the first 10 components
+```
+
+## Getting the pops
+
+I will color them by state and shape them by subspecies:
+```{r}
+wifl_grp <- read_csv("/Users/eriq/Documents/git-repos/wifl-popgen/data/meta/WIFL_Metadata.csv") %>%
+  select(Field_Number, State, Group) %>%
+  setNames(c("sample", "state", "subspp"))
+```
+
+So, now we can stick those on the data from the PCA, and expand it.
+```{r}
+wifl_angsd_pcs <- read_tsv("data/wifl-stuff/angsd-results/wifl-order-in-angsd.txt", col_names = "sample") %>%
+  left_join(wifl_grp) %>%
+  bind_cols(., aPC)
+```
+And now we can plot it:
+```{r}
+g <- ggplot(wifl_angsd_pcs, aes(x = PC1, y = PC2, colour = state, shape = subspp)) +
+  geom_point()
+
+g
+
+ggsave(g, filename = "outputs/angsd_pca.pdf", width = 10, height = 7)
+```
+
+That is a nice picture. Now, let's see what kind of picture you get from 
+using all the data.
+
+## PCA with all the GATK data
+
+We will use SNPRelate for this.
+
+```{r}
+wifl012 <- read_rds("../../wifl-popgen/data/rad/rad_wifl_clean_175_105000.rds")
+
+snpgdsCreateGeno(gds.fn = "wifl_clean.gds", 
+                 genmat = wifl012, 
+                 sample.id = rownames(wifl012), 
+                 snp.id = colnames(wifl012), 
+                 snpfirstdim = FALSE) 
+
+
+```
+
+Now do the PCA
+```{r}
+wifl_clean_gds <- snpgdsOpen("wifl_clean.gds")
+pca2 <- snpgdsPCA(wifl_clean_gds, autosome.only = FALSE)
+snpgdsClose(wifl_clean_gds)
+
+wifl_gatk_pcs <- tibble(sample = pca2$sample.id,
+    PC1 = pca2$eigenvect[,1],    # the first eigenvector
+    PC2 = pca2$eigenvect[,2]) %>%
+  left_join(wifl_grp)
+
+```
+
+And finally we can plot it:
+```{r}
+g <- ggplot(wifl_gatk_pcs, aes(x = PC1, y = PC2, colour = state, shape = subspp)) +
+  geom_point()
+
+g
+
+ggsave(g, filename = "outputs/gatk_pca.pdf", width = 10, height = 7)
+```
+
+## ANGSD PCA restricted to the "good 175"
+
+We tossed some poor quality samples at the end of the GATK pipeline.  
+I don't have time at the moment to rerun the angsd pca without them 
+(and I don't think it is appropriate to do so, anyway, since the chant
+from the angsd camp is that you don't have to throw anyone away).  But
+I can make the plot without the poor samples in there.  Like this:
+```{r}
+g <- wifl_angsd_pcs %>%
+  filter(sample %in% wifl_gatk_pcs$sample) %>%
+  ggplot(., aes(x = PC1, y = PC2, colour = state, shape = subspp)) +
+  geom_point()
+
+g
+
+ggsave(g, filename = "outputs/angsd_pca_175.pdf", width = 10, height = 7)
+```
+
+## What Fraction of Reads did we toss out?
+
+It would be worth looking at the distribution of number of aligned, non-duplicated
+reads per individual, and see how that compares to 120,000 reads per individual.  Neil
+noted that 120K might be a much smaller fraction of the total number of reads in the 
+WIFLs than in the chinook.
+
+To get these numbers we should be able to count the number of alignments in the
+BAM files.  These are on Rachael's section of `klohhuel`:
+```sh
+[kruegg@n7032 WIFL]$ module load samtools
+[kruegg@n7032 WIFL]$ for i in Plate?/bam/*.bam; do echo -n "$i  "; samtools view -c $i; done 
+Plate1/bam/WIFL1.1590-97224.bam  2566276
+Plate1/bam/WIFL1.1590-97225.bam  4050988
+Plate1/bam/WIFL1.1590-97239.bam  3813790
+Plate1/bam/WIFL1.1590-97241.bam  3578244
+Plate1/bam/WIFL1.1590-97247.bam  1503360
+Plate1/bam/WIFL1.1590-97284.bam  5715970
+[...]
+```
+That took a few minutes, and then I put the results into:  
+`/explorations/data/wifl-stuff/wifl-bamfile-counts.txt`, from whence it will be easy enough
+to process it out.  
+
+Let's look at those.  Some individuals were run on multiple plates.  We can
+summarise to get that:
+```{r}
+wifl_reads <- read_table2("data/wifl-stuff/wifl-bamfile-counts.txt", col_names = c("bam", "reads")) %>%
+  mutate(bam = str_replace(bam, "^.*bam/", "")) %>%
+  separate(bam, into = c("plate", "sample", "dump"), sep = "\\.") %>%
+  select(-dump) %>%
+  group_by(sample) %>%
+  summarise(tot_reads = sum(reads))
+```
+Then plot it:
+```{r}
+ggplot(wifl_reads, aes(x = tot_reads)) + 
+  geom_histogram(bins = 50, fill = "blue") +
+  geom_vline(xintercept = 120000, colour = "black")
+```
+So, yep, 120,000 reads is a serious fractional reduction.  The equivalent level to what Mike did 
+would be more around 2.5 million.
+
+
+
