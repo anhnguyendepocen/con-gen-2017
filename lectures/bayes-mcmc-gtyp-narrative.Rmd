@@ -314,9 +314,14 @@ atib <- list(
 ) %>%
   bind_rows(.id = "parameters")
 
-ggplot(atib, aes(x = p_A, y = density, colour = parameters)) +
+g <- ggplot(atib, aes(x = p_A, y = density, colour = parameters)) +
   geom_line() +
   ylim(0, 4.3)
+
+
+ggsave(g, filename = "figures/beta_densities.pdf", width = 7, height = 5)
+
+g
 ```
 
 The beta density for a random variable $X$ has the form:
@@ -384,9 +389,14 @@ and $\alpha_2 = 128$.  We can plot that if we want:
 xs <- seq(0, 1, by = 0.001)
 btib <- tibble(p_A = xs,
                density = dbeta(xs, 74, 128))
-ggplot(btib, aes(x = p_A, y = density)) +
+g <- ggplot(btib, aes(x = p_A, y = density)) +
   geom_line() +
   ggtitle("Posterior Distribution of p_A")
+
+
+ggsave(g, filename = "figures/pa_posterior.pdf", width = 7, height = 5)
+
+g
 ```
 
 ### To the Bayesian, the posterior distribution is everything
@@ -943,12 +953,70 @@ that case, here are what the observed versus expected genotype frequencies plot 
 
 ![](figures/mykiss_eelp_afprior_plot.png)
 
+That looks better than it does with the uniform prior, but it doesn't really look
+that good.  It certainly doesn't look like what you would expect.  
+
+What are the consequences of this? It seems reasonable that there are a number
+of analyses that might be affected by unreliable inference of genotypes...and some
+that probably are not.  That would be a good discussion item...
+
+### Subsampling Reads to Before Feeding them into ANGSD?
+
+Disclaimer here: I am not an expert at using ANGSD, but I have applied it a few times.
+Most recently I used it to reproduce a lot of the work in the recent Prince et al. 
+paper.  One of the things that intrigued me (as a statistician) was their practice
+of randomly subsampling aligned, filtered reads out of their BAM files for each individual before
+analyzing the data with ANGSD.  This was done, apparently, "To remove variation associated
+with variable sequencing depth."" (I'm not sure how that is supposed to work.  The models are such that
+even if you have a lot of reads from one individual, that individual will never be granted
+more than one genotypes' worth of information at a locus).
+
+For most of their analyses, they only used 60,000 alignments from Chinook and 
+120,000 from _mykiss_.  Here is a plot that shows where those numbers are relative
+to the distribution of number of reads across individuals.  The black vertical lines are
+at 60K and 120K for Chinook and Steelhead, respectively.
+
+![](figures/chin_mykiss_read_count_histos.png)
+
+Holy Moly!  That is a lot of data that is getting thrown away.  (By subsampling these
+BAMs, they are effectively
+tossing out $\approx$70% of the total number of alignmnents).
 
 
+That can't be good, can it? 
 
+### A PCA of Willow Flycatchers
 
+I was able to assess this (a little bit) by using Kristen's Willow Flycatcher data.
+When I perform a PCA using her data run through her GATK pipeline (using all the reads left after
+alignment and filtering of PCR duplicates) we get quite strong separation
+between the different subspecies of WIFLs and also some evidence of geographic
+structuring within the subspecies:
 
+![](figures/gatk_pca.png)
 
+### A PCA when We Subsample to 120K Reads and Use ANGSD/ngsTools
+
+However, we can take the same data set and ask, "What would this look like if Kristen
+were not super diligent in getting high read depths from high quality DNA, and so, instead, 
+she got much lower read depths and chose to run her data through ANGSD while subsampling her
+BAMs to 120K reads?"
+
+This is done by simply subsampling the BAMs to 120K reads and using ngsCovar to perform the 
+PCA.  Here is what that looks like:
+
+![](figures/angsd_pca.png)
+
+Hmm...the _trailii_ subspecies shows up as a clearly distinct cluster, but there is only limited
+separation between the remaining subspecies.  The picture is not quite so clear as it is with all
+the data, it doesn't accord well with subspecies designations and geographic structuring, and it
+is much harder to identify misidentified samples, etc.  
+
+Given this, I think that a good discussion topic for the week might be to explore
+how far one ought (or oughtn't) go in targeting low numbers of
+reads, subsampling them even further, and then believing that it
+should all be OK because one is
+going to call genotypes probabilistically.  
 
 ## Wrap Up
 
@@ -968,7 +1036,17 @@ of profoundly high rates of heterozygotes being miscalled as homozygotes. It doe
 out of the question that such error rates could influence downstream inferences.
 8. However, not all studies show very high genotyping error rates---high read depths and
 intelligent/stringent filtering can prevail.
-9. Probabilistic genotype calling is certainly a principled way to address these issues
+9. Probabilistic genotype calling is certainly a principled way to address these issues,
+but it is not a panacea.  It still adheres to the principles of GIGO and can't make something
+from nothing. 
+10. Don't fool yourself into thinking that by using probabilistic genotype calling
+you won't lose anything when you shave sequencing effort down to as little as possible.  
+It looks like it is possible to
+lose a fair bit when you go down to low read depth / coverage.  Doing so
+in the context of whole-genome sequencing makes sense, it is worth discussing whether
+doing RAD seq and then throwing away a lot of your reads and read depth makes
+much sense.
+
 
 
 
