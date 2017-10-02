@@ -8,7 +8,6 @@ output:
 
 ```{r}
 library(tidyverse)
-library(DiagrammeR)
 ```
 
 ## Bayesian Inference

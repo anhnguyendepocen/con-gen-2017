@@ -25,7 +25,8 @@
 % Or whatever. Note that the encoding and the font should match. If T1
 % does not look nice, try deleting the line with the fontenc.
 
-\logo{\includegraphics[width=.1\textwidth]{./images/official_NOAA_logo.pdf}}
+%\logo{\includegraphics[width=.1\textwidth]{./images/official_NOAA_logo.pdf}}
+\logo{}
 
 \title[microhaplotypes from NGS] % (optional, use only with long paper titles)
 {Reaching haplotopia: the promise and practice \\
@@ -35,7 +36,7 @@ in molecular ecology}
 \subtitle{} % (optional)
 
 \author[Eric C. Anderson] % (optional, use only with lots of authors)
-{Eric C.~Anderson and the NMFS-SWFSC-MEGA Team}
+{Eric C.~Anderson}
 % - Use the \inst{?} command only if the authors have different
 %   affiliation.
 
@@ -51,9 +52,9 @@ in molecular ecology}
 % - Use the \inst command only if there are several affiliations.
 % - Keep it simple, no one is interested in your street address.
 
-\date[Durham 2016] % (optional)
+\date[ConGen 2017] % (optional)
 {
-Durham University Ecology Seminar\\ 14 NOV 2016}
+Conservation Genomics Workshop\\ 27 SEP 2017}
 
 \subject{Talks}
 
@@ -122,35 +123,205 @@ UCSC Rockfish Project:
 %
 
 
+
 \begin{frame}{Overview}
-\begin{itemize}
-\item Next Generation Sequencing Methods
-\begin{itemize}
-\item sequencing, assembly, alignment
-\item genome representation reduction
-\item amplicon sequencing
-\end{itemize}
+\begin{enumerate}
+\item Larval dispersal and genetic patterns
+\item Kelp-rockfish recruitment project
+\item Next-generation sequencing and microhaplotypes
+\item Confirmation of our data quality
+\item Preliminary relationship inference work
+\end{enumerate}
 
-\item Microhaplotypes
-\begin{itemize}
-\item available by reanalysis of most data sets
-\item advantages
-\end{itemize}
+\end{frame}
 
-\item Example problem: Dispersal of larval rockfish
-\begin{itemize}
-\item parentage and sibling inference in a multispecies context
-\end{itemize}
 
-\item Tools from our lab:
-\begin{itemize}
-\item CKMRsim
-\item haPLOType
-\end{itemize}
 
+
+
+
+
+\begin{frame}{Larval dispersal patterns influence many things}
+
+\includegraphics[width = \textwidth]{./figs/many_larvae.jpg}\\
+{\tiny \vspace*{-4.5ex} \textcolor{white}{~rsmas.miami.edu}}
+
+{\small
+\begin{itemize}
+\item Dynamics of recruitment and populations
+\item The effects of fishing
+\item The utility of different MPA designs
+\item \ldots and it is just fascinating from a behavioral ecology perspective
+\end{itemize}
+}
+\end{frame}
+
+
+
+
+\begin{frame}{Try to study larval dispersal by linking larvae to parents}
+\framesubtitle{``Integrative evaluation of larval dispersal and delivery in kelp rockfish using {\em inter-generational genetic tagging}, demography and
+oceanography''}
+{\small Mark Carr (PI), Chris Edwards, Carlos Garza, Eric Anderson (Co-PIs)}\\
+\includegraphics[height=.2\textheight]{./figs/mcarr.jpg}
+\includegraphics[height=.2\textheight]{./figs/cedwards.jpg}
+\includegraphics[height=.2\textheight]{./figs/carlos.png} \\
+
+$\bullet$ {\bf Goal:} use parentage inference to accurately estimate the degree of self-recruitment of kelp rockfish in Carmel Bay, and integrate this with fine-scale current modeling.
+
+$\bullet$ I will be talking about the genetic tools we have developed to do this.
+\end{frame}
+
+
+
+
+
+\begin{frame}{Kelp rockfish ({\em Sebastes atrovirens})}
+\begin{center}
+\includegraphics[width=.7\textwidth]{./figs/kelpy.jpg}\\
+{\tiny \vspace*{-6ex} \textcolor{white}{photo: Chad King}}
+\end{center}
+{\tiny  Strongly associated with {\em Macrocystis}; $\approx$ Santa Cruz to Baja; 
+Life-span 20-25 years; Mature $\approx$ 5 years; Live-bearing, internal fertlization with multiple paternity; Fecundity in the 100,000's; 2-3 months pelagic larval duration.  Juveniles recruit to kelp beds in summer; Adults highly sedentary; no detectable population structure along coast (Gilbert-Horvath et al 2006).
+}
+\end{frame}
+
+
+
+
+
+\begin{frame}{Study Area: Carmel Bay}
+\begin{center}
+\includegraphics[width=.7\textwidth]{./figs/carmel_bay.png}\\
+\end{center}
+\end{frame}
+
+
+
+\begin{frame}{SMURF traps}
+\framesubtitle{Standard Monitoring Unit for the Recruitment of Reef Fishes}
+\begin{center}
+\includegraphics[width = 0.85\textwidth]{mhap_figs/smurf-solo.png}\\
+{\tiny Carr-Raimondi lab photo}
+\end{center}
+\end{frame}
+
+
+
+\begin{frame}{SMURF traps}
+\framesubtitle{Standardized protocol for juvenile collection}
+\begin{center}
+\includegraphics[width = 0.85\textwidth]{mhap_figs/smurf-binkie.png}\\
+{\tiny Carr-Raimondi lab photo}
+\end{center}
+\end{frame}
+
+
+
+
+
+\begin{frame}{Sampling of adult and juvenile rockfish}
+
+\vspace*{-8ex}
+Legions of undergraduates fishing and on SCUBA using biopsy-dart pole spears
+\begin{center}
+\includegraphics[width=\textwidth]{figs/sampling_map1-crop.pdf}
+\end{center}
+
+\mbox{}
+\vspace*{-10ex}\mbox{}
+Emily Saarman~\includegraphics[height=.1\textheight]{figs/emily_saarman.jpg}
+~~Dan Malone~\includegraphics[height=.1\textheight]{figs/dan_malone.jpg}
+
+\end{frame}
+
+
+
+
+
+\begin{frame}{Genetic Sampling/Genotyping Goals}
+\begin{itemize}
+\item Across 3 to 4 years (and perhaps more if we can continue this) get non-lethal samples from $\approx$~5,000 adults and $\approx$~5,000 recruiting kelp rockfish. 
+\item Accurately identify parent offspring pairs from amongst the 25 million possible pairs.
+\item That is a lot of chances to make a mistake!  Why did we think we could do this?
 \end{itemize}
 \end{frame}
 
+
+
+
+
+
+\begin{frame}{Digression: Why did we think we could do this?}
+\framesubtitle{We had pioneered similar techniques for replacing Coded Wire Tags 
+for the monitoring of hatchery salmon populations}
+\begin{center}
+\mbox{}
+\hfill
+\includegraphics[height=.33\textwidth]{./figs/finger.jpg}
+\hfill
+\includegraphics[height=.2\textwidth]{./figs/cwt.png}
+\hfill
+\includegraphics[height=.25\textwidth]{./figs/pink.png}
+\hfill
+\mbox{}
+\end{center}
+Our lab routinely genotypes tens of thousands of fish each year.
+\end{frame}
+
+
+
+\begin{frame}{Originally-proposed approach}
+\framesubtitle{Large-scale parentage inference with microfluidic SNP assays}
+\begin{center}
+\mbox{}\hspace*{-.10\textwidth}
+\includegraphics[width=1.16\textwidth]{figs/fluidigm.png}\\
+With 96.96 Arrays and only one controller and thermal cycler, \\
+can genotype almost 300 fish per day w/96 SNPs.
+
+Cost: $<$\$10/fish 
+\end{center}
+\end{frame}
+
+
+
+
+
+
+
+
+\begin{frame}{Microfluidic chips, a known quantity}
+\begin{center}
+\includegraphics[width=0.75\textwidth]{figs/AC_calculating_chipwall.jpg}
+\end{center}
+$\bullet$ However, 96 SNPs are not enough for single parent assignments,\\
+$\bullet$ and species ID in juveniles is unreliable
+\end{frame}
+
+
+
+
+
+\begin{frame}{The juvenile ID bombshell}
+\begin{columns}
+\begin{column}{.38\textwidth}
+\includegraphics[width=\textwidth]{./figs/juvie_rockfish.png}
+\end{column}
+\begin{column}{.55\textwidth}
+\begin{itemize}
+\item Below a certain size, kelp, gopher, and black-and-yellow rockfish are not visually dinstinguishable.
+\item Upwards of 50\% of juveniles could be non-kelp!
+\item Non-kelp rockfish could be identified with our SNP assay
+\item But, the SNP data on those other species would be essentially worthless
+\item Solution: hijack NGS tech to create markers useful for all three species
+\end{itemize}
+
+
+\end{column}
+
+\end{columns}
+
+\end{frame}
 
 
 
@@ -198,75 +369,13 @@ identification of polymorphisms and genotyping}
 
 
 
-\begin{frame}{Sequencing Capacities}
-\framesubtitle{Continually increasing.  Examples from Illumina:}
-\begin{itemize}
-\item Small Benchtop MiSeq sequencer:
-\begin{itemize}
-\item 25 million reads/run ($\approx \$1,000$ reagent cost)
-\item up to 2 x 300 bp
-\end{itemize}
-
-\item Large Core facility HiSeq sequencer:
-\begin{itemize}
-\item 500 million reads per lane ($\approx \$3,400$)
-\item up to 2 x 150 bp
-\end{itemize}
-\end{itemize}
-
-
-\begin{itemize}
-\item {\em Many} individuals can be sequenced together via combinatorial barcoding.
-\end{itemize}
-\end{frame}
-
-
-
-
-
-\begin{frame}{Combinatorial Barcodes}
-$\bullet$ Imagine that you prepared individuals in batches (plates) of three at time.\\
-$\bullet$ Individual barcode on one end; plate barcode on the other.
-\begin{center}
-\includegraphics[width=.95\textwidth]{mhap_figs/combi-barcodes-crop.pdf}
-\end{center}
-\end{frame}
-
-
-
-
-
-
-\begin{frame}{Fundamental Tradeoff}
-\begin{itemize}
-\item Accurate determination of the sequence {\em at a genomic position} and {\em in an individual} requires a sufficient number of reads sequencing that position in that individual.
-\item So, either:
-\begin{itemize}
-\item One (or a few) individuals across large swaths of genome
-\item Many individuals across a reduced portion of the genome
-\end{itemize}
-\item Methods for {\em reduced representation} sequencing:
-\begin{itemize}
-\item RNAseq (sequence just the transcriptome)
-\item RADseq (Restriction Associated DNA sequencing)
-\item GBS (Genotyping by Sequencing)
-\item Capture/Bait methods (MyBaits, RAPTURE, etc.)
-\item Amplicon Sequencing (GTseq)
-\end{itemize}
-\end{itemize}
-\end{frame}
-
-
-
-
-
 \begin{frame}{GTseq amplicon sequencing}
 \begin{center}
-\includegraphics[width=0.95\textwidth]{mhap_figs/gtseq-header.png}
+\includegraphics[width=0.95\textwidth]{figs/gtseq-header.png}
 \end{center}
 \begin{itemize}
 \item Multiplexed PCR primers amplify regions of interest.
-\item Amplicon sequencing of 200--500 regions in 500--2,000 individuals
+\item Amplicon sequencing of 100--500 regions in 300--2,000 individuals
 \item $\approx \$7$/individual
 \item Converted Fluidigm SNP assays.  Tens of 1,000s of salmon each year.
 \end{itemize}
@@ -282,7 +391,7 @@ $\bullet$ Individual barcode on one end; plate barcode on the other.
 \begin{frame}{GTseq -- I {\small (coming off the sequencer\ldots)}}
 \framesubtitle{2 Amplicons; 3 individuals on each of 3 plates (9 individuals total)}
 \begin{center}
-\includegraphics[width=0.95\textwidth]{mhap_figs/gtseq-soup-crop.pdf}
+\includegraphics[width=0.95\textwidth]{figs/gtseq-soup-crop.pdf}
 \end{center}
 \end{frame}
 
@@ -293,7 +402,7 @@ $\bullet$ Individual barcode on one end; plate barcode on the other.
 \begin{frame}{GTseq -- II (aligned amplicons)}
 \framesubtitle{Amplicon sequences are known. Alignment {\em in silico} is straightforward.}
 \begin{center}
-\includegraphics[width=0.95\textwidth]{mhap_figs/gtseq-amps-crop.pdf}
+\includegraphics[width=0.95\textwidth]{figs/gtseq-amps-crop.pdf}
 \end{center}
 \end{frame}
 
@@ -302,7 +411,7 @@ $\bullet$ Individual barcode on one end; plate barcode on the other.
 \begin{frame}{GTseq -- III (``demultiplexing'')}
 \framesubtitle{Identify individual origin of reads via combinatorial barcodes}
 \begin{center}
-\includegraphics[width=0.95\textwidth]{mhap_figs/gtseq-demultiplexed-crop.pdf}
+\includegraphics[width=0.95\textwidth]{figs/gtseq-demultiplexed-crop.pdf}
 \end{center}
 \end{frame}
 
@@ -313,7 +422,7 @@ $\bullet$ Individual barcode on one end; plate barcode on the other.
 \begin{frame}{GTseq -- IV (identify SNPs in sequence)}
 \framesubtitle{Variants are easy to identify}
 \begin{center}
-\includegraphics[width=0.95\textwidth]{mhap_figs/gtseq-snps-crop.pdf}
+\includegraphics[width=0.95\textwidth]{figs/gtseq-snps-crop.pdf}
 \end{center}
 \end{frame}
 
@@ -340,7 +449,7 @@ Depending on the analyses, the result is either a lack of power or (potentially)
 
 \begin{frame}{Phase of SNPs on reads is almost universally ignored}
 \begin{center}
-\includegraphics[width=0.94\textwidth]{mhap_figs/three-snp-reads.pdf}
+\includegraphics[width=0.94\textwidth]{figs/three-snp-reads.pdf}
 \end{center}
 \end{frame}
 
@@ -359,7 +468,7 @@ Depending on the analyses, the result is either a lack of power or (potentially)
 \begin{frame}{Microhaplotypes}
 \framesubtitle{A simple idea / plea, that\ldots}
 \begin{center}
-\includegraphics[width=0.94\textwidth]{mhap_figs/three-snp-reads-mhap.pdf}
+\includegraphics[width=0.94\textwidth]{figs/three-snp-reads-mhap.pdf}
 \end{center}
 \end{frame}
 
@@ -383,7 +492,9 @@ Depending on the analyses, the result is either a lack of power or (potentially)
 \begin{itemize}
 \item Unlike single SNP assays, the microhaplotype data collection method, unmodified,
 can yield useful data for non-target species.
+\item So, we opened up sampling to more species
 \end{itemize}
+\item We designed 96 microhaplotype amplicons for genotyping on an Illumina Mi-Seq in batches of 384 individuals.
 \end{itemize}
 \end{frame}
 
@@ -393,137 +504,98 @@ can yield useful data for non-target species.
 
 
 
-\begin{frame}{Marine Population Structure}
-\begin{columns}
-\begin{column}{0.45\textwidth}
-\includegraphics[width=1.1\textwidth]{mhap_figs/vetter_coast.png}\\
-{\tiny Hyde and Vetter (2009) CJFAS}
-\end{column}
-\begin{column}{0.55\textwidth}  %%<--- here
-\begin{itemize}
-\item California Current
-\begin{itemize}
-\item Upwelling; nutrients; long larval duration
-\end{itemize}
-\item Barriers to gene flow
-\begin{itemize}
-\item Suspected from patterns of genetic variation
-\item Difficult to estimate actual migration/dispersal rates
-\end{itemize}
-\item Considerable interest in larval dispersal/retention
-\begin{itemize}
-\item Design of MPAs, etc.
-\end{itemize}
-\end{itemize}
 
-\end{column}
-\end{columns}
+
+
+\begin{frame}{Microhaplotype Genotyping}
+\framesubtitle{Whoa!  15,000 fish genotyped in $<$4 months. Total materials cost $\approx$\$6/fish}
+\includegraphics[width = 0.8\textwidth]{figs/diana.jpg}\\
+{\footnotesize Diana Baetscher (UCSC Grad Student) }
 \end{frame}
 
 
 
 
-\begin{frame}{Larval Dispersal off California}
-\framesubtitle{Heavily influenced by Ekman transport}
+\begin{frame}{Extracting microhaplotypes from alignments}
+\framesubtitle{Bioinformatics software from our lab --- {\sc microhaplot}}
+
 \begin{columns}
-\begin{column}{0.45\textwidth}
-\includegraphics[width=\textwidth]{mhap_figs/ekman-upwelling.jpg}\\
-\includegraphics[width=\textwidth]{mhap_figs/ekman-downwelling.jpg}\\
-{\tiny Amer. Meterol. Soc.}
+\begin{column}{0.5\textwidth}
+\begin{itemize}
+{\small
+\item R package by Thomas Ng (UCSC grad student)
+\item Appoint SNPs in haplotypes with a VCF file
+\item Extract haplotypes from SAM files
+\item Filter on Read Depth / Allelic Balance ratio
+\item Partially completed Bayesian inference of haplotypes
+\item Full Shiny App for Visualization.
+}
+{\tiny https://github.com/ngthomas/microhaplot}
+\end{itemize}
 \end{column}
-\begin{column}{0.55\textwidth}  %%<--- here
-\begin{itemize}
-\item Typical Pattern:
-\begin{itemize}
-\item Winds blowing south down coast
-\item Water transport offshore
-\end{itemize}
-\item Periods of relaxation:
-\begin{itemize}
-\item Winds blowing to the north
-\item Water transport toward shore
-\end{itemize}
-\item Larval recruit origins
-\begin{itemize}
-\item Coarse current models suggest most come from far away
-\item BUT, Fine-scale current irregularities might allow local
-larval retention 
-\end{itemize}
-
-\end{itemize}
-
+\begin{column}{0.5\textwidth}
+\includegraphics[width = 0.8\textwidth]{figs/thomas.jpg}
 \end{column}
 \end{columns}
 
-
 \end{frame}
 
+\newpage
+\mbox{}
+\vspace*{2em}
+\mbox{}
+\includegraphics[width=\textwidth]{figs/haplot2.png}
 
 
 
+\begin{frame}{How Well Does It Work? --- Roadmap}
 
-
-
-
-\begin{frame}{Question:}
-\framesubtitle{What is the degree of larval self-recruitment around Carmel Bay?}
-\begin{columns}
-\begin{column}{0.45\textwidth}
-\mbox{}\hspace*{-1ex}
-\includegraphics[width=1.2\textwidth]{mhap_figs/vetter_coast-CB.pdf}\\
-{\tiny Hyde and Vetter (2009) CJFAS}
-\end{column}
-\begin{column}{0.55\textwidth}  %%<--- here
 \begin{itemize}
-\item Experimental Approach with Kelp Rockfish
-\begin{enumerate}
-\item Non-lethally sample a boatload ($\approx 5,000$) of adult fish
-\item Genotype them
-\item Collect tissues from $\approx 5,000$ larval recruits
-\item Genotype them
-\item Find parent-offspring pairs
-\end{enumerate}
+\item Works on multiple species?  Yes! grad student Hayley Nuetzel just completed species ID work with 24 species.  With very little missing data, and highly accurate species assignments.
+\item Haplotype Diversity in Kelp Rockfish
+\item Genotype Quality / Accuracy:
+\begin{itemize}
+\item Sequence Read Depths
+\item Distortions from Hardy-Weinberg Proportions
+\item Regenotype Discordance Rate
 \end{itemize}
-\end{column}
-\end{columns}
+\item Preliminary Results from Relationship Inference
+\end{itemize}
 \end{frame}
 
 
 
-
-
-
-
-
-
-
-
-\begin{frame}{Kelp Rockfish ({\em Sebastes atrovirens})}
-
-{\tiny photo: Wikimedia}
-\includegraphics[width=0.9\textwidth]{mhap_figs/Sebastes_atrovirens.jpg}\\
-Adults stationary.  Sampled by biopsy spear or hook-and-line.  Very active volunteer 
-``recreational-sampling'' component. 
-\end{frame}
-
-
-
-
-\begin{frame}{SMURF traps}
-\framesubtitle{Standard Monitoring Unit for the Recruitment of Reef Fishes}
+\begin{frame}{Allele/Haplotype Diversity}
+\framesubtitle{In 96 Loci in Kelp Rockfish: 1039 Unique Alleles in total!}
 \begin{center}
-\includegraphics[width = 0.85\textwidth]{mhap_figs/smurf-solo.png}\\
-{\tiny Carr-Raimondi lab photo}
+\includegraphics[width = 0.8\textwidth]{figs/alle-count-histo.pdf}
 \end{center}
 \end{frame}
 
 
 
-\begin{frame}{SMURF traps}
-\framesubtitle{Standardized protocol for juvenile collection}
+
+\begin{frame}{Read Depths For Calling Alleles}
+\framesubtitle{Much higher than low-coverage genome work}
+
+Across $\approx$15,000 individuals and at all 96 loci, called-allele read depths 
+were as follows:
+
 \begin{center}
-\includegraphics[width = 0.85\textwidth]{mhap_figs/smurf-binkie.png}\\
-{\tiny Carr-Raimondi lab photo}
+\begin{tabular}{lrrr}
+Read Depth Bin  &  n  &  Percentage  &  Cumulative\\ \hline
+(0,10]  &  3859  &  0.2  &  0.2\\
+(10,20]  &  20509  &  1.1  &  1.3\\
+(20,30]  &  34903  &  1.9  &  3.2\\
+(30,40]  &  44896  &  2.4  &  5.6\\
+(40,50]  &  50964  &  2.8  &  8.4\\
+(50,75]  &  138593  &  7.5  &  15.9\\
+(75,100]  &  136191  &  7.4  &  23.3\\
+(100,250]  &  637913  &  34.5  &  57.8\\
+(250,500]  &  484226  &  26.2  &  83.9\\
+(500,1e+03]  &  234141  &  12.7  &  96.6\\
+(1e+03,1e+06]  &  62604  &  3.4  &  100.0\\
+\end{tabular}
 \end{center}
 \end{frame}
 
@@ -531,85 +603,15 @@ Adults stationary.  Sampled by biopsy spear or hook-and-line.  Very active volun
 
 
 
-\begin{frame}{Originally-proposed approach}
-\framesubtitle{Large-scale parentage inference with microfluidic SNP assays}
+\begin{frame}{Expected-vs-observed rate of homozygotes\ldots}
+\framesubtitle{Allele-specific Homozygosities from $\approx$ 6,000 kelp rockfish}
+Green = 10 loci with null alleles.  Orange = 86 remaining loci
 \begin{center}
-\mbox{}\hspace*{-.10\textwidth}
-\includegraphics[width=1.16\textwidth]{mhap_figs/fluidigm.png}\\
-With 96.96 Arrays and only one controller and thermal cycler, \\
-can genotype almost 300 fish per day w/96 SNPs.
-
-Cost: $<$\$15/fish 
+\includegraphics[width=.7\textwidth]{./figs/microhap_homozyg.pdf}
 \end{center}
+$\bullet$ Null alleles can be treated systematically.\\
+$\bullet$ From 75 kelp rockfish genotyped twice, the per-locus discordance rate was 3/1000.
 \end{frame}
-
-
-
-
-
-
-
-
-\begin{frame}{Microfluidic chips, a known quantity}
-\begin{center}
-\includegraphics[width=0.75\textwidth]{mhap_figs/AC_calculating_chipwall.jpg}
-\end{center}
-$\bullet$ However, 96 SNPs are not enough for single parent assignments,\\
-$\bullet$ and species ID in juveniles is unreliable
-\end{frame}
-
-
-
-
-
-
-
-
-\begin{frame}{Visual Species ID of juveniles is difficult}
-\framesubtitle{Kelp, Gopher, Black-and-yellow indistinguishable at small size}
-\begin{columns}
-\begin{column}{0.50\textwidth}
-\includegraphics[width=\textwidth]{./mhap_figs/juvie_rockfish.png}
-\end{column}
-\begin{column}{0.50\textwidth}
-\begin{itemize}
-\item Up to 40\% of juvenile samples might not be kelp rockfish
-\item SNP assays in non-target species tend to be monomorphic, and hence 
-useless for any inference.
-\item It hurts to contemplate throwing away that much
-genotyping effort.
-\end{itemize}
-\end{column}
-\end{columns}
-\end{frame}
-
-
-
-
-
-
-
-
-
-
-\begin{frame}{Developing GTseq Amplicons for Rockfish}
-\begin{itemize}
-\item ddRAD seq on 16 individuals 
-\item $\approx 4,000$ genome fragments sequenced
-\item 200 developed into amplicons, and tested
-\item 165 amplicons retained
-\item Amplified and sequenced from 240 individuals.
-\item Allele/Haplotype frequencies estimated
-\begin{itemize}
-\item 825 alleles (average of 5 haplotypes per locus)
-\end{itemize}
-
-\item Power for Parentage and Full sibling inference computed
-\end{itemize}
-
-\end{frame}
-
-
 
 
 
@@ -682,64 +684,44 @@ genotyping effort.
 
 
 
-\begin{frame}{Nuts and bolts}
-\framesubtitle{Software from our lab -- I}
+\begin{frame}{{\tt microhaplot} overview of workflow}
+\framesubtitle{R package by Thomas Ng}
 
-{\tt {\Large microhaplot}} 
 \begin{itemize}
-\item an R package by Thomas Ng
-\item Appoint SNPs in haplotypes with a VCF file
-\item Extract haplotypes from SAM files
-\item Filter on Read Depth / Allelic Balance ratio
-\item Partially completed Bayesian inference of haplotypes
-\item Full Shiny App for Visualization.
-\end{itemize}
+\item PCR amplify amplicons, or otherwise select a small portion of the genome (100 to 5000 chunks, each about 150 bp long) and sequence those
+regions in many barcoded individuals.
+\item Align those reads to a ``genome,'' (which might even just be the sequences that you expect from the regions that you have amplified.)
+\item Call SNPs in those regions.  Put those variant calls in a VCF file.
+\item Filter those variants into ones that you are confident about and create what we can call
+our ``input VCF'' file.  This is the file that tells {\tt microhaplot} at which positions it should look to
+find and record variants.  
 
-{\tt https://github.com/ngthomas/microhaplot}
+\end{itemize}
 \end{frame}
 
 
-\newpage
-\mbox{}
-\vspace*{2em}
-\mbox{}
-\includegraphics[width=\textwidth]{mhap_figs/haplot2.png}
-
-
-
-\begin{frame}{Nuts and bolts}
-\framesubtitle{Software from our lab -- II}
-
-{\tt\Large CKMRsim}
+\begin{frame}{}
 \begin{itemize}
-\item an R package by Eric C. Anderson
-\item Estimate false positive rates for pairwise relationship inference
-\item Built to accommodate general genotyping error models
-\item Importance sampling algorithm to estimate very small probabilities
-\item Integration with Mendel to simulate linked markers
-\item Key parts written in C++ for speed.
+\item Feed the input VCF and the SAM files (alignment files) into {\tt microhaplot}.  It then parses the SAMs and records the bases at each position that is named in the input VCF.  Nucleotides that occur together
+on the same read are the ``microhaplotypes.'' 
+\begin{itemize}
+ \item Note: there is no statistical phasing going on here.
+ \item The tricky part in this is parsing the CIGAR string to figure out which positions in the reads
+ correspond to the desired positions in the reference.
 \end{itemize}
 
-{\tt https://github.com/eriqande/CKMRsim}
-\end{frame}
-
-
-
-\begin{frame}{Conclusions}
+\item Visualize, filter, interpret, and output data while using {\tt microhaplot}
 \begin{itemize}
-\item NGS technologies provide opportunities for low-cost, high-throughput
-genotyping of many individuals
-\item Typical pipelines for GTseq and amplicon sequencing don't extract as
-much information as possible.
-\item Preserving the haplotypic phase of SNPs on reads yields multiallelic markers\ldots
-\item \ldots that provide substantially more power for relationship inference
-(at least in high-diversity species)
-\item Tools for handling these microhaplotype data are available from our lab
+\item This is what we will do together today (we won't work so much with the previous bioinformatics steps,
+but, rather, we just want to familiarize people with the {\tt microhaplot} interface.  
+\item Talk to me or Thomas about getting your own data into {\tt microhaplot}.
+\end{itemize}
+
+\item Goto: {\tt https://github.com/ngthomas/microhaplot}
+
 \end{itemize}
 
 
-This talk available at:
-{\tt https://github.com/eriqande/TALKS-microhap}
 \end{frame}
 
 
