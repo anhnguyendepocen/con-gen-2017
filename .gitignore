@@ -3,3 +3,12 @@
 .RData
 .Ruserdata
 .DS_Store
+explorations/outputs
+explorations/*.nb.html
+husby.tfam
+husby.tped
+husby_genabel_raw
+instructur_worksheets
+other_instructor_data
+other
+perspectives_manuscript

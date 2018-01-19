@@ -150,6 +150,36 @@ g
 ggsave(g, filename = "outputs/gatk_pca.pdf", width = 10, height = 7)
 ```
 
+## Make a figure for the perspective piece
+
+We are going to want to recode the names to subspp. 1, 2, 3, 4, and change the sizes
+of the characters and facet it.
+
+```{r}
+togeth <- list(
+  `Target Depth: ~1X` = wifl_angsd_pcs %>% select(sample, PC1, PC2, state, subspp),
+  `Target Depth: ~30X` = wifl_gatk_pcs
+) %>%
+  bind_rows(., .id = "depth") %>%
+  mutate(depth = factor(depth, levels = c("Target Depth: ~30X", "Target Depth: ~1X"))) %>%
+  mutate(subspp = recode(subspp, ada = "1", brw = "2", ext = "3", tra = "4")) %>%
+  rename(State = state,
+         `Sub spp.` = subspp)
+
+g <- ggplot(togeth, aes(x = PC1, y = PC2, fill = State, shape = `Sub spp.`)) +
+  geom_point(size = 2) +
+  facet_wrap(~depth, ncol = 1) + 
+  scale_shape_manual(values = 21:24) + 
+  scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+  theme_bw()
+
+
+ggsave(g, filename = "outputs/eca_songbird_pca.pdf", width = 7, height = 7)
+
+g
+```
+
+
 ## ANGSD PCA restricted to the "good 175"
 
 We tossed some poor quality samples at the end of the GATK pipeline.  
@@ -211,5 +241,26 @@ ggplot(wifl_reads, aes(x = tot_reads)) +
 So, yep, 120,000 reads is a serious fractional reduction.  The equivalent level to what Mike did 
 would be more around 2.5 million.
 
+Now, how about an approximate "read-depth" calculation.  We know that Kristen plans stuff to
+try to have 20X to 30X coverage at RAD loci, on average.  Let's look at the median read depth:
+```{r}
+aves <- wifl_reads %>%
+  summarise(median_tot_reads = median(tot_reads),
+            mean_tot_reads = mean(tot_reads))
+
+aves
+```
+
+So, if we downsample those to 120,000 we are in effect targeting things 20 - 30X / 43.6.  So, that is around 1/2X to 3/4X, which is 
+~1X in the big scheme of things.  
 
 
+## Computing Fst
+
+```{r}
+sample_groups <- wifl_gatk_pcs %>%
+  select(sample, subspp) %>%
+  rename(group = subspp)
+
+pairwise_fst(wifl012, sample_groups)
+```

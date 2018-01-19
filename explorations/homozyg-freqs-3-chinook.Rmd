@@ -1,0 +1,184 @@
+---
+title: "Homozygote Freqs Figure for Perspectives"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+---
+
+Here I am going to make the figures for the perspectives piece that show the
+expected vs observed homozygote frequencies.  I have put the 012 data that 
+I will use into `./explorations/data_for_perspective_figure_1`
+
+load libs
+```{r}
+library(genoscapeRtools)
+library(stringr)
+library(tidyverse)
+```
+
+
+## Read data in:
+
+### Prince et al Chinook
+
+I crunched this in eca-premature-migration-2017 and copied the results over.  It is 
+genotypes called by ANGSD with a uniform prior.
+```{r}
+asnp <- read_tsv("data_for_perspective_figure_1/chinook-like-pca-012-transposed.txt.gz", col_names = FALSE)
+asnp_names <- paste(asnp$X1,  asnp$X2, sep = "--")
+
+angsd_mat <- as.matrix(asnp[,-c(1,2)])
+rownames(angsd_mat) <- asnp_names
+storage.mode(angsd_mat) <- "integer"
+colnames(angsd_mat) <- NULL
+
+angsd012 <- t(angsd_mat)[-191,]  # have to pull off the last row which was from reading an extra empty tab
+
+chin_names <- scan("data_for_perspective_figure_1/chinook-bamlist-names.txt", what = "character")
+rownames(angsd012) <- chin_names
+```
+
+Now, count up the number from each population:
+```{r}
+angsd_pops <- tibble(sample = rownames(angsd012)) %>%
+  tidyr::separate(sample, into = c("species", "river", "mig_pattern", "N1", "N2"), remove = FALSE) %>%
+  mutate(pop = str_c(river, "--", mig_pattern)) %>%
+  select(sample, pop)
+
+angsd_pops %>%
+  count(pop)
+```
+
+Note that Tri-M has the largest sample so we will use that.
+```{r}
+use_em <- angsd_pops %>%
+  filter(pop == "Tri--M")
+
+trinM012 <- angsd012[use_em$sample,]
+
+prince_gfc <- genoscapeRtools::geno_freq_calcs(trinM012, use_em) %>%
+    filter(!is.nan(z_score))  # this chucks out monomorphic loci
+
+prince012 <- trinM012
+
+```
+
+
+### hecht
+
+```{r}
+name <- "chinook_hecht"
+d012 <- genoscapeRtools::read_012(prefix = file.path("data_for_perspective_figure_1", name), gz = TRUE)
+pops <- readr::read_csv(paste0("data_for_perspective_figure_1/", name, "_pops.csv"))
+
+bp_pops <- pops %>%
+    filter(pop == "JOC")  # this is the pop with the largest sample 
+
+bp_names <- bp_pops %>%
+  .$sample
+
+# this just takes data from the biggest pop samples
+bp012 <- d012[bp_names,]
+
+hecht012 <- bp012
+
+hecht_gfc <- genoscapeRtools::geno_freq_calcs(bp012, bp_pops) %>%
+    filter(!is.nan(z_score))  # this chucks out monomorphic loci
+```
+
+### wak_chinook
+
+```{r}
+name <- "wak_chinook"
+d012 <- genoscapeRtools::read_012(prefix = file.path("data_for_perspective_figure_1", name), gz = TRUE)
+pops <- readr::read_csv(paste0("data_for_perspective_figure_1/", name, "_pops.csv"))
+
+bp_pops <- pops %>%
+    filter(pop == "Kogrukluk")  # this is the pop with the largest sample 
+
+bp_names <- bp_pops %>%
+  .$sample
+
+# this just takes data from the biggest pop samples
+bp012 <- d012[bp_names,]
+
+wak012 <- bp012
+
+wak_gfc <- genoscapeRtools::geno_freq_calcs(bp012, bp_pops) %>%
+    filter(!is.nan(z_score))  # this chucks out monomorphic loci
+```
+
+## combine those and plot them
+
+```{r}
+togeth <- list(
+  prince = prince_gfc,
+  wak = wak_gfc,
+  hecht = hecht_gfc
+) %>%
+  bind_rows(.id = "dataset")
+
+allhomo <- togeth %>%
+  filter(geno != 1)
+```
+
+Plot:
+```{r}
+source("../../gbs-miscall-rates/R/geno-freq-boundaries.R")
+
+tmp <- allhomo %>%
+  mutate(dstr = recode(dataset,
+                       wak = "(a) Korukluk,   n = 57,   L = 10,944,   HMR = 0.02",
+                       hecht = "(b) Johnson Creek,   n = 68,  L = 13,764,   HMR = 0.21",
+                       prince = "(c) Umpqua Mature,   n = 27,   L = 15,228,   HMR = 0.53" 
+                       ))
+
+g <- ggplot(tmp, aes(x = p_exp, y = p_obs)) + 
+  facet_wrap(~dstr, ncol = 1) +
+  geom_jitter(color = "blue", alpha = 0.05) +
+  geom_polygon(data = geno_freq_boundaries() %>% filter(geno == 0), fill = NA, linetype = "dashed", colour = "black") +
+  geom_abline(slope = 1, intercept = 0, colour = "black") +
+  theme_bw() +
+  xlab("Expected homozygote frequency") +
+  ylab("Observed homozygote frequency")
+
+ggsave(g, filename = "outputs/chinook_3_studies.pdf", width = 4, height = 9)
+```
+
+
+
+## Estimate the HMR
+
+```{r}
+# source the function that does it:
+source("../../gbs-miscall-rates/R/estimate-m-etc.R")
+```
+
+### wak
+
+```{r}
+wak_hmr <- estimate_m(wak012, nreps = 500, m_init = 0.1)
+```
+
+```{r}
+plot(wak_hmr$m)
+mean(wak_hmr$m[-(1:100)])
+```
+
+### hecht
+
+```{r}
+hecht_hmr <- estimate_m(hecht012, nreps = 800, m_init = 0.1)
+plot(hecht_hmr$m)
+mean(hecht_hmr$m[-(1:200)])
+```
+ 
+ ### prince
+ 
+```{r}
+prince_hmr <- estimate_m(prince012, nreps = 1000, m_init = 0.1)
+plot(prince_hmr$m)
+
+mean(prince_hmr$m[-(1:400)])
+```

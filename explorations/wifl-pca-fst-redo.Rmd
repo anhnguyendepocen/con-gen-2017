@@ -1,0 +1,1189 @@
+---
+title: "WIFL PCA and Fst re-do by full GATK pipeline and subsampled ANGSD"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+---
+
+
+After writing this up for the perspectives piece it became clear that it would
+be nice to repeat this experiment while being a little more explicit about
+the read depths that are being used, and also doing a range of subsampling
+fractions.  Further, Gordon was interested in seeing how estimates of Fst might
+differ with different degrees of subsampling.
+
+So, I have a quiet day here during the week of Thanksgiving to work on this a little bit.
+My game plan is to first tally up the read depths that were available for each individual
+that we ended up using in the final WIFL data set.  Then I will explore different subsampling 
+levels.
+
+## Average Depth of Retained Individuals and Sites
+
+Let's actually include all the individuals here when we compute things the depth
+so that we can look at who got kicked out.  We can get lists of sites and things 
+using R first
+```{r}
+library(tidyverse)
+library(genoscapeRtools)
+library(stringr)
+library(broom)
+
+wifl012 <- read_rds("../../wifl-popgen/data/rad/rad_wifl_clean_175_105000.rds")
+
+# write the positions out to a file
+postib <- tibble(name = colnames(wifl012)) %>%
+  separate(name, into = c("CHROM", "POS"), sep = "--") %>%
+  write_tsv(path = "outputs/wifl_positions.txt", col_names = FALSE)
+
+```
+
+No, get that to hoffman
+```sh
+2017-11-21 11:02 /outputs/--% (master) pwd
+/Users/eriq/Documents/git-repos/con-gen-2017/explorations/outputs
+
+# I put that into /u/scratch/k/kruegg and am working there
+module load vcftools
+
+vcftools --vcf /u/nobackup/klohmuel/rbay/WIFL/SNP/WIFL_final.vcf  --positions wifl_positions.txt --depth --out wifl_105K_positions
+```
+It turns out that WIFL_final.vcf has the 175 individuals at 105K SNPs.  I put the result into
+`./explorations/data/wifl_105K_positions.idepth`.
+
+Here is what the distribution of average read depths at called sites across individuals
+looks like:
+```{r}
+idepths <- read_tsv("data/wifl_105K_positions.idepth") 
+
+ggplot(idepths, aes(x = MEAN_DEPTH)) +
+  geom_histogram(fill = "blue") +
+  xlim(0, 120)
+```
+
+And the mean and median read depth across these individuals:
+```{r} 
+mean(idepths$MEAN_DEPTH)
+median(idepths$MEAN_DEPTH)
+```
+
+So, it is safe to say that they are calling SNPs at an average read depth of around 31.
+
+That will give us some insight into how we will want to downsample things.
+
+## Number of reads in the BAM files
+
+We have done this calculation previously.  Let's just refresh our memories and have a look
+further.
+
+Here we read in the total number of alignments:
+```{r}
+wifl_reads <- read_table2("data/wifl-stuff/wifl-bamfile-counts.txt", col_names = c("bam", "reads")) %>%
+  mutate(bam = str_replace(bam, "^.*bam/", "")) %>%
+  separate(bam, into = c("plate", "sample", "dump"), sep = "\\.") %>%
+  select(-dump) %>%
+  group_by(sample) %>%
+  summarise(tot_reads = sum(reads))
+```
+Now we can left join the average read depths per individual and see how it relates to the 
+number of alignments:
+```{r}
+reads_and_aln <- idepths %>%
+  rename(sample = INDV) %>%
+  left_join(wifl_reads)
+
+ggplot(reads_and_aln, aes(x = tot_reads, y = MEAN_DEPTH)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+That is quite believable.  There are two very interesting outliers there.
+Let's do that linear regression, forcing the intercept to be 0.
+```{r}
+arlm <- lm(MEAN_DEPTH ~ tot_reads + 0, data = reads_and_aln) %>%
+  tidy()
+
+arlm
+```
+
+So, that should make it pretty easy to come up with subsampling fractions from which
+we can get a good idea of the expected sampling depth on those 105,000 SNPs.  
+
+In general if we want average read depths at those SNPs to be 1, 2, 5, and 10 we would subsample 
+to the following degrees:
+```{r}
+dds <- tibble(des_depth = c(0.6483945, 1, 2, 5, 10, 36.5)) %>%
+  mutate(alns = des_depth / arlm$estimate[1]) %>%
+  mutate(rounded = round(alns, digits = -4))
+dds
+```
+And note that the mean number of alignments for the data that produced the
+final wifl data set is:
+```{r}
+mean(reads_and_aln$tot_reads)
+```
+
+Cool, so that checks out.  Thus, if we want to subsample these BAMs down to these 
+levels, we can do that.  Note that I put 0.64X in there b/c it corresponds to 
+120000 alignments.  
+
+Not only that, but it looks like 1.85e06 is below the number of alignments for everyone:
+```{r}
+ggplot(reads_and_aln, aes(x = tot_reads)) +
+  geom_histogram() +
+  geom_vline(xintercept = 1.85e06, colour = "red")
+```
+
+
+
+## A script to subsample the bams
+
+Basically, we want to put together a little script to downsample bams.
+
+### Merging multiply-sequenced birds
+
+The only weird thing about is that some of the birds were genotyped on multiple
+plates, so we will want to merge them first, and then downsample them.  So, we might as
+well write a script that will merge the bams first, and then another that will downsample
+them.   I am going to plan on doing most of this under qrsh. So I will just
+write some code snippets here that I can use.
+
+I will do this all in scratch, and I will put a file there of the 175 wifls that we
+will use.  
+```{r}
+cat(reads_and_aln$sample, sep = "\n", file = "outputs/175_wifls.txt")
+```
+This has to be copied to `$SCRATCH`.   Then we can run the following in scratch.  I am 
+going to just copy it to there and then run it under gsub, cuz this is going to take a while...
+```sh
+#!/bin/bash
+#$ -cwd
+#$ -V
+#$ -N mergie
+#$ -o mergie.log
+#$ -e mergie.error
+#$ -pe shared 1
+#$ -l h_data=4G,time=20:00:00
+#$ -M eric.anderson@noaa.gov
+#$ -m a
+
+source /u/local/Modules/default/init/modules.sh
+module load samtools
+
+mkdir merged_bams
+
+for i in $(cat 175_wifls.txt); do
+  echo $i
+  bams="/u/nobackup/klohmuel/rbay/WIFL/Plate[123]/bam/WIFL[123].$i.bam"
+  echo $bams
+  bam_array=($bams)
+  num_bams=${#bam_array[@]}
+  echo $num_bams
+  
+  if [ $num_bams -eq 1 ]; then
+    call="cp $bams merged_bams/$i.bam"
+  elif [ $num_bams -gt 1 ]; then
+    call="samtools merge merged_bams/$i.bam $bams"
+  fi
+  
+  echo $call
+  
+  $call
+  
+done
+```
+I just wrote the above into a script called `mergie.sh` and then I did:
+```sh
+qsub mergie.sh
+```
+
+That will take a bit.  But once that is done we can downsample at a few different levels and
+then compute PCAs and read depths, etc.
+
+I should have indexed them too.  Oh well, I will do that on the shell
+```sh
+# in: /u/scratch/k/kruegg/merged_bams
+for i in *.bam; do 
+  echo $i; 
+  samtools index $i
+done
+```
+
+That was taking a super long time so I just incorporated it into the following script.
+
+### The actual subsampling
+
+We do this with samtools view.  It is pretty straightforward. Things don't have to
+be sorted after subsampling, it appears.  But we will want to index them, I imagine.
+
+Let's work up a script. I am going to do this as a job array.  Takes too long otherwise.
+
+So, first prepare the area in scratch
+```sh
+NS="120000  190000  370000  930000 1850000"
+
+# make some output directories
+for n in $NS; do 
+  mkdir subsampled_bams_$n
+done
+```
+
+
+```sh
+#!/bin/bash
+#$ -cwd
+#$ -V
+#$ -N subby
+#$ -o subby.log
+#$ -e subby.error
+#$ -pe shared 1
+#$ -l h_data=4G,time=24:00:00
+#$ -M eric.anderson@noaa.gov
+#$ -t 1-175:1
+
+source /u/local/Modules/default/init/modules.sh
+module load samtools
+
+NS="120000  190000  370000  930000 1850000"
+
+# cycle over the birds
+i=$(awk -v line=$SGE_TASK_ID 'NR == line {print $1}' 175_wifls.txt)
+
+
+if [ ! -e "merged_bams/$i.bam.bai" ]; then
+samtools index merged_bams/$i.bam
+fi
+
+count=$(samtools view -c merged_bams/$i.bam)
+
+# cycle over the desired number of alignments. For each one, compute the
+# subsampling fraction of $count alignments that will give us the 
+# right number on average
+
+for n in $NS; do 
+
+  fract=$(echo $count $n | awk '{print $2/$1}')
+
+  samtools view -b -s $fract -o subsampled_bams_$n/$i.bam merged_bams/$i.bam
+  samtools index subsampled_bams_$n/$i.bam
+
+done
+
+```
+Done as a job array that was done in less than an hour. And it looks like everything ran correctly:
+```sh
+[kruegg@login2 kruegg]$ for i in subsampled_bams_*; do echo $i; ls -l $i/*.bam | wc; done
+subsampled_bams_120000
+    175    1575   15215
+subsampled_bams_1850000
+    175    1575   15565
+subsampled_bams_190000
+    175    1575   15215
+subsampled_bams_370000
+    175    1575   15215
+subsampled_bams_930000
+    175    1575   15215
+[kruegg@login2 kruegg]$ for i in subsampled_bams_*; do echo $i; ls -l $i/*.bai | wc; done
+subsampled_bams_120000
+    175    1575   15740
+subsampled_bams_1850000
+    175    1575   15915
+subsampled_bams_190000
+    175    1575   15740
+subsampled_bams_370000
+    175    1575   15740
+subsampled_bams_930000
+    175    1575   15740
+[kruegg@login2 kruegg]$
+```
+
+Great!
+
+## Genotype Posteriors for PCA
+
+I've been doing all this in scratch and I only have a few more days before things get overwritten
+there.  So, I will copy the subsampled bams to NEWSCRATCH (the flash-based scratch), and intend
+to do the rest there in the next few days.
+
+However, let's get things going with the 120K subsamples to make sure they work.
+I am going to make a little script to do this.  We may as well follow the settings
+that Prince et al used.  Actually, they required MAF > 0.05.  That is probably why there
+were so few SNPs.  Let's do what we did for the wifl VCF and say MAF > 0.01.
+```sh
+#!/bin/bash
+#$ -cwd
+#$ -V
+#$ -N angsd-snps
+#$ -o angsd-snps.log
+#$ -e angsd-snps.error
+#$ -pe shared 8
+#$ -l h_data=3G,time=24:00:00
+#$ -M eric.anderson@noaa.gov
+#$ -m a
+
+
+
+source /u/local/Modules/default/init/modules.sh
+module load zlib/1.2.8
+
+
+
+ 
+
+# variables that can be changed:
+BIRDLIST=175_wifls.txt
+minInd=87 # half of 175
+SUBBY=120000  # the number of reads subsampled.  Gives the directory name
+ANGSD=~/nobackup-klohmuel/bin/ngsTools/angsd/angsd
+
+OUTDIR=snps_directory_$SUBBY
+mkdir $OUTDIR
+BAMLIST=$OUTDIR/bamlist
+
+# make the bamlist
+for i in $(cat $BIRDLIST); do echo $PWD/subsampled_bams_${SUBBY}/$i.bam; done > $BAMLIST
+
+# then fire off angsd
+$ANGSD -bam $BAMLIST -out $OUTDIR/results -minQ 20 -minMapQ 10 \
+  -minInd $minInd -GL 1 -doMajorMinor 1 -doMaf 2 -SNP_pval 1e-6 \
+  -minMaf 0.01 -doGeno 32 -doPost 2 -P 8
+
+#gunzip RAD_pca/${c1}*.gz
+
+#count=\$(sed 1d RAD_pca/${c1}*mafs| wc -l | awk '{print \$1}')" >> ${c1}.sh#
+#	echo "/home/djprince/programs/ngsTools/ngsPopGen/ngsCovar -probfile RAD_pca/${c1}.geno -outfile RAD_pca/${c1}.covar -nind $nInd -nsites \$count -call 1" >> ${c1}.sh
+
+
+```
+
+I saved that to a script and we will run it now.  After I look at the output, I will 
+figure out how to make a job array over to do it over smaller collections of 
+scaffolds.
+```sh
+[kruegg@login2 con-gen-wifl]$ pwd
+/u/flashscratch/k/kruegg/con-gen-wifl
+[kruegg@login2 con-gen-wifl]$ ls
+175_wifls.txt  subsampled_bams_120000   subsampled_bams_190000  subsampled_bams_930000
+script         subsampled_bams_1850000  subsampled_bams_370000
+[kruegg@login2 con-gen-wifl]$ qsub script/call-snps-angsd-simple.sh 
+Your job 1105796 ("angsd-snps") has been submitted
+
+```
+That is asking for 8 processors with 3 Gb for each on one machine.  Would be much
+better to do it in a job array.
+
+It turns out that only took a few hours to run, but I still want to see what is involved in
+running it as a job array.  So, I will do that here, and then I will compare the results.
+
+It will be important to compare the results, because the geno files are 
+raw binary (a bunch of doubles) and we want to make sure that cat will reliably
+catenate them.  Note only that but we ought to be able to just catenate the gzipped
+files directly.  Cool...we will hash them at the end to make sure.
+
+### Running as a job array
+
+1. First make a directory for it and put the bamlist in it: 
+    ```sh
+    [kruegg@login2 con-gen-wifl]$ pwd
+    /u/flashscratch/k/kruegg/con-gen-wifl
+    [kruegg@login2 con-gen-wifl]$ ls snp_array_120000/
+    bamlist
+    ```
+2. Make a place to put some region files:
+    ```sh
+    [kruegg@n2006 snp_array_120000]$ mkdir region_files
+    ```
+3. Then, make a series of files that are "region" files.  Essentially telling
+ANGSD which scaffolds to do.  I have a script that clumps these up into 4 Mb 
+parcels.  Let's see if we can use it.
+    ```sh
+    [kruegg@n2006 snp_array_120000]$ pwd
+    /u/flashscratch/k/kruegg/con-gen-wifl/snp_array_120000
+    
+    module load samtools
+    samtools view -h ../subsampled_bams_120000/1590-97224.bam | \
+      awk '/^@SQ/' | sed 's/SN://g; s/LN://g' | \
+      awk -f ~/genoscape-bioinformatics/script/assemble-scaffold-lists.awk | \
+      awk -F"\t" '{print $2}' | \
+      awk '{file=sprintf("region_files/%03d.txt", NR); for(i=2;i<=NF;i+=2) printf("%s:\n", $i) > file; }'
+    ```
+4. Now, we just need a job array script that we will run _in the_ `snp_array_120000`
+_directory_ (or any other directory that we have prepared with those region files
+and with an appropriate bamfile.)  Let's write down what that would look like:
+
+```sh
+#!/bin/bash
+#$ -cwd
+#$ -V
+#$ -N angsd-sa
+#$ -o angsd-sa.log
+#$ -e angsd-sa.error
+#$ -l h_data=4G,time=2:00:00
+#$ -M eric.anderson@noaa.gov
+#$ -t 1-3:1    
+
+# Full Run =  -t 1-247:1
+
+FNUM=$(printf '%03d' $SGE_TASK_ID)
+
+source /u/local/Modules/default/init/modules.sh
+module load zlib/1.2.8
+
+minInd=87 # half of 175
+ANGSD=~/nobackup-klohmuel/bin/ngsTools/angsd/angsd
+BAMLIST=bamlist
+
+# then fire off angsd
+$ANGSD -bam $BAMLIST -out $FNUM \
+  -rf region_files/$FNUM.txt \
+  -minQ 20 -minMapQ 10 \
+  -minInd $minInd -GL 1 -doMajorMinor 1 -doMaf 2 -SNP_pval 1e-6 \
+  -minMaf 0.01 -doGeno 32 -doPost 2
+  
+sleep 300
+
+```
+
+I saved that as `angsd-array.sh` and then fired it off:
+```sh
+[kruegg@login2 snp_array_120000]$ qsub angsd-array.sh 
+Your job-array 1107546.1-3:1 ("angsd-sa") has been submitted
+```
+Yowzers.  That went very fast.  I have thus included a `sleep 300` line to make
+sure that it takes at least 5 minutes so we don't get throttled.
+
+Then we launch all of them and see what happens.
+```sh
+[kruegg@login2 snp_array_120000]$ qsub angsd-array.sh 
+Your job-array 1107734.1-247:1 ("angsd-sa") has been submitted
+```
+Wow.  That finished in about 10 minutes.  Most of that time was probably
+in the sleep 300s.  So, good.
+
+### Catenating geno and maf files
+
+For the maf files, we need to toss the headers off:
+```sh
+# first check the mafs
+[kruegg@login2 snp_array_120000]$ (zcat 001.mafs.gz | head -n 1; for i in *.mafs.gz; do zcat $i | awk 'NR==1 {next} {print}'; done) > results.mafs
+[kruegg@login2 snp_array_120000]$ gzip results.mafs
+
+[kruegg@login2 snp_array_120000]$ zcat results.mafs.gz | wc 
+  29332  205324 1741574
+[kruegg@login2 snp_array_120000]$ zcat  ../snps_directory_120000/results.mafs.gz | wc 
+  29411  205877 1746130
+# So, there are slight diffs.  About 80 SNPs that don't show up in the array version.
+# and if you diff them, then you can see just a handful of rounding differences, etc.
+# Not gonna worry about that.
+
+# how about those geno posteriors:
+cat [0-9][0-9][0-9].geno.gz >  results.geno.gz
+```
+I copied that results.geno.gz file to `/tmp` on my laptop.  Now, let's see if we can
+read it with R after gunzipping it.
+```{r, eval=FALSE}
+# number of things we should find is 175 * nSNPs * 3
+# nSNPs is the number of lines -1 in the mafs file...=29331
+NUM <- 175 * 29331 * 3
+NUM
+# give it space to read 5 times NUM if it is there...
+boing <- readBin("/tmp/results.geno", what = "double", n = 5 * NUM)
+
+length(boing) == NUM  # this is TRUE
+```
+Booyah!  That totally works.  So, we are good to go.  Let's do them all...
+
+### Setting up all the other subsampling levels
+
+Doing these is just a matter of setting up the directories and copying some scripts
+and files around and then editing the script to allow longer run times if we need them.
+```sh
+[kruegg@login2 con-gen-wifl]$ pwd
+/u/flashscratch/k/kruegg/con-gen-wifl
+
+# first get the bamlists
+for SUBBY in 190000 370000 930000 1850000; do 
+  mkdir snp_array_$SUBBY; 
+  for i in $(cat 175_wifls.txt); do 
+    echo $PWD/subsampled_bams_${SUBBY}/$i.bam; 
+  done > snp_array_$SUBBY/bamlist;  
+done
+
+# then just copy over the region files
+for SUBBY in 190000 370000 930000 1850000; do cp -r snp_array_120000/region_files snp_array_${SUBBY}/; done 
+
+# and also copy over the script
+for SUBBY in 190000 370000 930000 1850000; do cp snp_array_120000/angsd-array.sh  snp_array_${SUBBY}/; done 
+
+```
+Then I edited 930000 and 1850000 to have longer times so they don't get killed.  Probably
+not an issue, but I want to be on the safer side...
+
+Then launch em:
+```sh
+[kruegg@login2 con-gen-wifl]$ pwd
+/u/flashscratch/k/kruegg/con-gen-wifl
+[kruegg@login2 con-gen-wifl]$ cd snp_array_190000/
+[kruegg@login2 snp_array_190000]$ qsub angsd-array.sh 
+Your job-array 1108064.1-247:1 ("angsd-sa") has been submitted
+[kruegg@login2 snp_array_190000]$ cd ../snp_array_370000/
+[kruegg@login2 snp_array_370000]$ qsub angsd-array.sh 
+Your job-array 1108065.1-247:1 ("angsd-sa") has been submitted
+[kruegg@login2 snp_array_370000]$ cd ../snp_array_930000/
+[kruegg@login2 snp_array_930000]$ qsub angsd-array.sh 
+Your job-array 1108066.1-247:1 ("angsd-sa") has been submitted
+[kruegg@login2 snp_array_930000]$ cd ../snp_array_1850000/
+[kruegg@login2 snp_array_1850000]$ qsub angsd-array.sh 
+Your job-array 1108067.1-247:1 ("angsd-sa") has been submitted
+```
+
+Then do the same on complete data from those 175 birds:
+```sh
+# first get the bamlists
+for SUBBY in complete_bams; do 
+  mkdir snp_array_$SUBBY; 
+  for i in $(cat 175_wifls.txt); do 
+    echo $PWD/merged_bams/$i.bam; 
+  done > snp_array_$SUBBY/bamlist;  
+done
+```
+Then I copied over the other goodies, and then I launched that task...
+```sh
+[kruegg@login2 snp_array_complete_bams]$ pwd
+/u/flashscratch/k/kruegg/con-gen-wifl/snp_array_complete_bams
+[kruegg@login2 snp_array_complete_bams]$ qsub angsd-array.sh
+Your job-array 1109286.1-247:1 ("angsd-sa") has been submitted
+```
+That gave some alloc errors.  I upped the memory to 10 Gb
+
+```sh
+[kruegg@login2 snp_array_complete_bams]$ pwd
+/u/flashscratch/k/kruegg/con-gen-wifl/snp_array_complete_bams
+[kruegg@login2 snp_array_complete_bams]$ qsub angsd-array.sh
+Your job-array 1109292.1-247:1 ("angsd-sa") has been submitted
+```
+
+
+### Doing MAF of 0.05 too
+
+Much later I also modified the script to filter on a minMAF of 0.05 and launched all those.
+At one point there were 1000 cores running on hoffman.  Very crazy.  
+
+### catenating all the results
+
+I need a script to run in each of the directories to catenate all the results. I've done a little
+of this, but I also want to get the .arg files catenated.  So, let's give it a whirl.  Run this above the
+snp_array_XXXX directories:
+```sh
+# here is the output name for the files.  I used maf < 0.01 so I include that on there
+
+for SUFF in 120000 190000 370000 930000 1850000 complete_bams; do
+  OutName=all_indivs_maf_01_ss_$SUFF
+  cd snp_array_$SUFF
+  
+  echo $PWD  # just listing what is happening
+  echo $OutName
+  
+  (zcat 001.mafs.gz | head -n 1; for i in [0-9][0-9][0-9].mafs.gz; do zcat $i | awk 'NR==1 {next} {print}'; done) > $OutName.mafs
+  (wc $OutName.mafs | awk '{print $1 - 1}') > $OutName.num_loci
+  gzip $OutName.mafs
+  cat [0-9][0-9][0-9].geno.gz >  $OutName.geno.gz
+  
+  for i in [0-9][0-9][0-9].arg; do
+    echo "========== $i ============"
+    cat $i
+  done > $OutName.arg
+  gzip $OutName.arg
+  
+  cd ../
+done
+
+```
+
+After that I copied all the results files to nobackup-klohmuel:
+```sh
+[kruegg@login3 eca-con-gen-wifl]$ pwd
+/u/home/k/kruegg/nobackup-klohmuel/eca-con-gen-wifl
+[kruegg@login3 eca-con-gen-wifl]$ ls angsd-genos/
+all_indivs_maf_01_ss_120000.arg.gz    all_indivs_maf_01_ss_1850000.mafs.gz   all_indivs_maf_01_ss_370000.arg.gz    all_indivs_maf_01_ss_930000.mafs.gz
+all_indivs_maf_01_ss_120000.geno.gz   all_indivs_maf_01_ss_1850000.num_loci  all_indivs_maf_01_ss_370000.geno.gz   all_indivs_maf_01_ss_930000.num_loci
+all_indivs_maf_01_ss_120000.mafs.gz   all_indivs_maf_01_ss_190000.arg.gz     all_indivs_maf_01_ss_370000.mafs.gz   all_indivs_maf_01_ss_complete_bams.arg.gz
+all_indivs_maf_01_ss_120000.num_loci  all_indivs_maf_01_ss_190000.geno.gz    all_indivs_maf_01_ss_370000.num_loci  all_indivs_maf_01_ss_complete_bams.geno.gz
+all_indivs_maf_01_ss_1850000.arg.gz   all_indivs_maf_01_ss_190000.mafs.gz    all_indivs_maf_01_ss_930000.arg.gz    all_indivs_maf_01_ss_complete_bams.mafs.gz
+all_indivs_maf_01_ss_1850000.geno.gz  all_indivs_maf_01_ss_190000.num_loci   all_indivs_maf_01_ss_930000.geno.gz   all_indivs_maf_01_ss_complete_bams.num_loci
+```
+Look at the number of SNPs called:
+```sh
+[kruegg@login3 angsd-genos]$ for i in all_indivs_maf_01_ss_*.num_loci; do echo $i; cat $i; done 
+all_indivs_maf_01_ss_120000.num_loci
+29331
+all_indivs_maf_01_ss_1850000.num_loci
+1233984
+all_indivs_maf_01_ss_190000.num_loci
+126631
+all_indivs_maf_01_ss_370000.num_loci
+374963
+all_indivs_maf_01_ss_930000.num_loci
+898320
+all_indivs_maf_01_ss_complete_bams.num_loci
+1668238
+```
+It is going to be really interesting to see what happens when we do the PCA on these.
+
+## ngsCovar
+
+I was going to just use the setting that Prince et al. used, but they did it by calling 
+genotypes (using the maximum posterior one), which is not recommended, unless one has really 
+high read depth data (like >20X). So, I am going to want to do a variety of things.
+
+Let's play around with the 120000 data, cuz that will be pretty fast.
+```sh
+[kruegg@n2175 snp_array_120000]$ pwd
+/u/flashscratch/k/kruegg/con-gen-wifl/snp_array_120000
+
+MAF=0.01
+SS=120000
+GENOS=all_indivs_maf_01_ss_$SS.geno.gz
+NSITES=$(head -n 1 all_indivs_maf_01_ss_$SS.num_loci)
+OUTFILE=covar_${SS}_maf_${MAF}
+
+~/nobackup-klohmuel/bin/ngsTools/ngsPopGen/ngsCovar \
+  -probfile <(gunzip -c $GENOS) -outfile $OUTFILE -nind 175 -nsites $NSITES -call 0 -minmaf $MAF
+
+```
+
+So, we can obviously change that easily to try different things.
+```sh
+MAF=0.05
+SS=930000
+GENOS=all_indivs_maf_01_ss_$SS.geno.gz
+NSITES=$(head -n 1 all_indivs_maf_01_ss_$SS.num_loci)
+OUTFILE=covar_${SS}_maf_${MAF}
+
+~/nobackup-klohmuel/bin/ngsTools/ngsPopGen/ngsCovar \
+  -probfile <(gunzip -c $GENOS) -outfile $OUTFILE -nind 175 -nsites $NSITES -call 0 -minmaf $MAF
+```
+
+I ran that up to 930000 in a shell, but then just made quick little shell scripts to run under 
+qsub for the remaining ones. For example, like this:
+```sh
+[kruegg@login1 snp_array_complete_bams]$ pwd
+/u/flashscratch/k/kruegg/con-gen-wifl/snp_array_complete_bams
+[kruegg@login1 snp_array_complete_bams]$ qsub do-covar.sh
+Your job 1114836 ("covar") has been submitted
+
+```
+Afterward I copied these to `~/nobackup-klohmuel/eca-con-gen-wifl/covar_outputs` then put them in this
+repo at `./explorations/pca_fst_stuff_from_hoffman`
+
+
+### Getting the PCs
+
+We want to get a tibble that has columns `sample`, `PC1` and `PC2`.
+We make a function to read those covar outputs and get the eigen-stuff from
+it and then get the first six PCs.
+```{r}
+#' @param samples text file with one line per sample just giving the sample
+#' names in the order they were passed in the bamlist to angsd.
+#' @param cov_file path to the covariance matrix produced by ngsTools
+slurp_covar2pcs <- function(samples = "pca_fst_stuff_from_hoffman/175_wifls.txt", 
+                            cov_file = "pca_fst_stuff_from_hoffman/covar_outputs/covar_120000_maf_0.01") {
+  
+  sams <- scan(samples, what = "character")
+  covar <- read.table(cov_file, stringsAsFact = F)
+  
+  eig <- eigen(covar, symm = TRUE)
+  PC <- as.data.frame(eig$vectors) 
+  
+  tibble(sample = sams, PC1 = PC$V1, PC2 = PC$V2, PC3 = PC$V3, PC4 = PC$V4, PC5 = PC$V5, PC6 = PC$V6)
+}
+```
+
+Then, we need to get the state and subspp of each sample:
+```{r}
+wifl_grp <- read_csv("/Users/eriq/Documents/git-repos/wifl-popgen/data/meta/WIFL_Metadata.csv") %>%
+  select(Field_Number, State, Group) %>%
+  setNames(c("sample", "state", "subspp")) %>%
+  mutate(subspp = recode(subspp, ada = "1", brw = "2", ext = "3", tra = "4"))
+
+```
+
+And then cycle over the subsampling levels and slurp all the stuff in:
+```{r}
+levs <- c(120000, 190000, 370000, 930000, 1850000, "complete_bams")
+names(levs) <- levs
+angsd_pcas_01 <- lapply(levs, function(n) slurp_covar2pcs(cov_file = paste0("pca_fst_stuff_from_hoffman/covar_outputs/covar_", n, "_maf_0.01"))) %>%
+  bind_rows(.id = "ss_level") %>%
+  left_join(wifl_grp, by = "sample") %>%
+  mutate(ss_level = factor(ss_level, levels = levs))
+```
+
+Try quickly plotting it:
+```{r}
+g <- ggplot(angsd_pcas_01, aes(x = PC1, y = PC2, fill = state, shape = `subspp`)) +
+  geom_point(size = 2) +
+  facet_wrap(~ss_level, ncol = 3) + 
+  scale_shape_manual(values = 21:24) + 
+  scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+  theme_bw()
+
+ggsave(g, filename = "outputs/6_angsd_subsampling_levels.pdf", width = 15, height = 10)
+
+g
+```
+
+Boy! Those are exceedingly ugly.  Wow!  I may want to go back and set the MAF to 0.05 in the
+ngsCovar to see if that makes any difference.
+
+Before I do that though...
+
+### Exploring plots that gray out all but one subspp
+
+It would be nice to look at these with all subspp greyed out except for the focal one
+and then have all the focal ones shown.  I thought maybe I would try to do that
+with an animation, but i think that facetting on the subspp might be better.
+```{r}
+comps <- angsd_pcas_01 %>%
+  filter(ss_level == "complete_bams") %>%
+  mutate(subspp_color = subspp)
+
+compsgray <- comps %>% select(-subspp_color, -state) 
+
+g <- ggplot(comps, aes(x = PC1, y = PC2, fill = state, shape = `subspp`)) +
+  geom_point(data = compsgray, size = 2, fill = "lightgray", colour = "gray") +
+  geom_point(data = comps, size = 2) + 
+  scale_shape_manual(values = 21:24) + 
+  facet_wrap(~ subspp_color) +
+  scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+  theme_bw()
+
+ggsave(g, filename = "outputs/angsd_complete_bams.pdf", width = 10, height = 8)
+
+g
+```
+
+That is interesting.  For fun, let's look at faceting on state:
+```{r}
+ggplot(comps, aes(x = PC1, y = PC2, fill = state, shape = `subspp`)) +
+  geom_point(data = compsgray, size = 2, fill = "lightgray", colour = "gray") +
+  geom_point(data = comps, size = 2) + 
+  scale_shape_manual(values = 21:24) + 
+  facet_grid(subspp_color ~ state) +
+  scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+  theme_bw()
+```
+
+That is interesting.
+
+### look at the GATK data PCA
+```{r}
+wifl012 <- read_rds("../../wifl-popgen/data/rad/rad_wifl_clean_175_105000.rds")
+wifl_pca <- genoscape_pca(wifl012) %>%
+  .$pca_df %>%
+  rename(PC1 = `PC-01`, PC2 = `PC-02`) %>%
+  select(sample, PC1, PC2) %>%
+  left_join(wifl_grp, by = "sample") %>%
+  mutate(subspp_color = subspp)
+```
+
+Then we can plot this just the same way:
+```{r}
+wifgray <- wifl_pca %>% select(-state, -subspp_color)
+g <- ggplot(wifl_pca, aes(x = PC1, y = PC2, fill = state, shape = `subspp`)) +
+  geom_point(data = wifgray, size = 2, fill = "lightgray", colour = "gray") +
+  geom_point(data = wifl_pca, size = 2) + 
+  scale_shape_manual(values = 21:24) + 
+  facet_wrap(~ subspp_color) +
+  scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+  theme_bw()
+
+ggsave(g, filename = "outputs/gatk_pca_4panel.pdf", width = 10, height = 8)
+
+g
+```
+
+### Plot results for the MAF 0.05 results
+
+```{r}
+angsd_pcas_05 <- lapply(levs, function(n) slurp_covar2pcs(cov_file = paste0("pca_fst_stuff_from_hoffman/covar_outputs/covar_", n, "_maf_0.05"))) %>%
+  bind_rows(.id = "ss_level") %>%
+  left_join(wifl_grp, by = "sample") %>%
+  mutate(ss_level = factor(ss_level, levels = levs))
+```
+
+Plot them all:
+```{r}
+g <- angsd_pcas_05 %>%
+  mutate(ss_level_rd = recode_factor(ss_level,
+                                     `120000` = "0.65X",
+                                     `190000` = "1X",
+                                     `370000` = "2X",
+                                     `930000` = "5X",
+                                     `1850000` = "10X",
+                                     complete_bams = "36X")) %>%
+  ggplot(., aes(x = PC1, y = PC2, fill = state, shape = `subspp`)) +
+  geom_point(size = 2) +
+  facet_wrap(~ss_level_rd, ncol = 3) + 
+  scale_shape_manual(values = 21:24) + 
+  scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+  theme_bw()
+
+ggsave(g, filename = "outputs/6_angsd_subsampling_levels_maf_05.pdf", width = 15, height = 10)
+
+g
+```
+
+
+### Do the same, but drop out 10X and include the SNPRelate results
+
+```{r}
+
+wtmp <- wifl_pca %>%
+  mutate(ss_level = "snprelate") %>%
+  select(ss_level, sample, PC1, PC2, subspp, state)
+  
+
+gg <- angsd_pcas_05 %>%
+  select(ss_level, sample, PC1, PC2, subspp, state) %>%
+  bind_rows(wtmp, .) %>% 
+  mutate(ss_level = factor(ss_level, levels = c("snprelate", "120000", "190000", "370000", "930000", "1850000", "complete_bams"))) %>%
+  mutate(ss_level_rd = recode_factor(ss_level,
+                                     `snprelate` = "SNPRelate - 36X",
+                                     `120000` = "ngsCovar - 0.65X",
+                                     `190000` = "ngsCovar - 1X",
+                                     `370000` = "ngsCovar - 2X",
+                                     `930000` = "ngsCovar - 5X",
+                                     `1850000` = "ngsCovar - 10X",
+                                     `complete_bams` = "ngsCovar - 36X")) %>%
+  filter(ss_level_rd != "ngsCovar - 36X") %>%
+  ggplot(., aes(x = PC1, y = PC2, fill = state, shape = `subspp`)) +
+  geom_point(size = 2) +
+  facet_wrap(~ss_level_rd, ncol = 3) + 
+  scale_shape_manual(values = 21:24) + 
+  scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+  theme_bw()
+
+ggsave(gg, filename = "outputs/snprelate_and_5_angsd_subsampling_levels_maf_05.pdf", width = 11, height = 7)
+
+gg
+
+```
+
+## Let's make greyed out 4-panel plots for all subsampling levels and MAFs
+
+We can just wrap this up in a little function that takes the full data frame.
+```{r}
+greyed_plots <- function(atib, maf) {
+  
+  alist <- split(atib, f = atib$ss_level)
+  
+  lapply(names(alist), function(n){
+    comps <- alist[[n]] %>%
+      mutate(subspp_color = subspp)
+    
+    compsgray <- comps %>% select(-subspp_color, -state) 
+    
+    g <- ggplot(comps, aes(x = PC1, y = PC2, fill = state, shape = `subspp`)) +
+      geom_point(data = compsgray, size = 2, fill = "lightgray", colour = "gray") +
+      geom_point(data = comps, size = 2) + 
+      scale_shape_manual(values = 21:24) + 
+      facet_wrap(~ subspp_color) +
+      scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+      theme_bw()
+    
+    ggsave(g, filename = paste0("outputs/angsd-greyed-4-panel-", n, "-minmaf-", maf, ".pdf"), 
+                                width = 10, height = 8)
+    
+  })
+}
+
+greyed_plots(angsd_pcas_01, 0.01)
+greyed_plots(angsd_pcas_05, 0.05)
+```
+
+Those are in PDF files.  
+
+Plotting things in the greyed out versions show that when we use only these good 175 individuals, then 
+subsampling to 120,000 at a MAF > 0.05 actually doesn't look too terribly bad.  Three of the subspecies
+are mostly distinct.  It is a little worse at MAF > 0.01.  What is interesting is that as you start adding
+more SNPs, things get worse pretty quickly.  For example, at 190,000 alignments the subspecies have gotten
+pretty botched up and overlapped, especially at MAF > 0.05.  When you get to 370,000 alignments it is
+even gnarlier.
+
+OK.  This makes me curious about whether something similar might go on in the Prince et al data.
+What happens if we don't subsample the data or subsample it less.  In the text they say that they
+tested a lot of different subsampling levels and used the smallest one before the clusters started
+to disperse.  So, one would think that they didn't have that weird horseshoe.
+
+But, let's check it out.  I will do that in the `eca-premature-migration-2017` repository.
+Check it out in `eric-notes/010-explore-pca-and-subsampling.Rmd`
+
+
+## Make a new figure for the perspectives paper
+
+We can go ahead and make a figure like we had before. The best looking ANGSD one is with 
+MAF>0.05, so we will use that one.  No graying out here.  Maybe we could put the
+grayed out ones in a supplement or something.
+```{r}
+figdat <- list(`Ave Read Depth ~36X` = wifl_pca,
+     `Ave Read Depth ~0.65X` = angsd_pcas_05 %>% filter(ss_level == 120000)
+) %>% bind_rows(.id = "depth") %>%
+  mutate(depth = factor(depth, levels = c("Ave Read Depth ~36X", "Ave Read Depth ~0.65X"))) %>%
+  rename(State = state,
+         `Sub spp.` = subspp)
+
+g <- ggplot(figdat, aes(x = PC1, y = PC2, fill = State, shape = `Sub spp.`)) +
+  geom_point(size = 2) +
+  facet_wrap(~depth, ncol = 2) + 
+  scale_shape_manual(values = 21:24) + 
+  scale_fill_discrete(guide = guide_legend(override.aes = list(shape = 21))) +
+  theme_bw()
+
+ggsave(g, filename = "outputs/wifl_pca_comparison.pdf", width = 7, height = 5)
+
+```
+
+
+## Displaying and estimating genotyping error rates at 0.64X and other subsampling levels
+
+We can call genotypes with ANGSD or, if we wanted to just read them from the genos file
+and then sample from those posteriors. Since we already have the posteriors dumped to my
+laptop, it will be nice to use those. I wrote some Cpp code in genoscapeRtools to do this 
+quickly.  I think it will be more informative to sample from these posteriors than to do the
+EM algorithm to assign genotypes the way I believe ANGSD does.
+
+
+Let's see what this looks like.
+```{r}
+ss <- 120000
+genos <- paste0("../explorations/pca_fst_stuff_from_hoffman/angsd-genos/all_indivs_maf_01_ss_", ss, ".geno.gz")
+mafs <- paste0("../explorations/pca_fst_stuff_from_hoffman/angsd-genos/all_indivs_maf_01_ss_", ss, ".mafs.gz")
+sams <- "../explorations/pca_fst_stuff_from_hoffman/175_wifls.txt"
+
+# read in the angsd probs
+aprobs <- genoscapeRtools::read_angsd_geno_probs(genos, sams, mafs)
+
+# make a string for the locus names
+snps <- paste(aprobs$snps$chromo, aprobs$snps$position, sep = "--")
+
+# simualate the genos
+sgenos <- genoscapeRtools::sample_from_angsd_probs(x = aprobs$probs,
+                                                   samples = aprobs$samples, 
+                                                   snps = snps, 
+                                                   thresh = 0.80)
+
+# now we want to make some plots.  Grab just the AZ subspp-3 guys
+AZ3 <- wifl_grp %>%
+  filter(state == "AZ", subspp == "3") %>%
+  filter(sample %in% rownames(sgenos))
+
+sgg <- sgenos[AZ3$sample, ]
+
+# explore keeping only things called in at least 80 or 90%%
+keepers <- apply(sgg, 2, function(x) mean(x > -1)) > 0.50
+losers <- {tmp <- apply(sgg, 2, function(x) mean(x > -1)); tmp > 0.5 & tmp < 0.6}
+
+#gfc <- geno_freq_calcs(sgg[ , sample(x = 1:ncol(sgg), size = min(c(20000, ncol(sgg))))])
+#gfc <- geno_freq_calcs(sgg[ , keepers])
+gfc <- geno_freq_calcs(sgg)
+
+
+# here is the fraction of genotypes that are missing
+mean(sgenos == -1)
+
+# here is how many total there are:
+dim(sgenos)
+
+```
+Once we have that we can give it a plot:
+```{r}
+source("../../gbs-miscall-rates/R/geno-freq-boundaries.R")
+
+ggplot(gfc , aes(x = p_exp, y = p_obs, colour = geno)) +
+    geom_jitter(alpha = 0.15, position = position_jitter(width = 0.01, height = 0.01)) +
+    facet_wrap(~ geno) +
+    geom_polygon(data = geno_freq_boundaries(), fill = NA, linetype = "dashed", colour = "black") + 
+    geom_abline(slope = 1, intercept = 0, linetype = "solid")
+```
+
+Some notes:
+
+- On the 120,000 subsampled version in the birds, if we filter at posterior > 0.8 and having a posterior > 0.8 in more than 
+50% of the individuals we find that most the SNPs remaining live along the upper boundary for heterozygotes.
+I would guess that most of these SNPs are duplicated regions or paralogs, etc.  And I suspect that
+when you subsample the BAMs, the loci that are left with sufficient reads for calling genotypes 
+are in duplicated genome regions.
+- So, the above really says that you probably want to toss out regions that have far more 
+reads than most.  This relates to what Christen was saying about how there must be a better way
+to subsample things so that you still have coverage over more of the genome.
+- Interestingly, when the mykiss is subsampled it doesn't show that pattern where 
+there is an excess of heterozygotes.
+- It seems to me that when you use the minInd option the way Prince et al. have used it 
+in their PCA calculation, it just checks to make sure that minInd individuals have at least one
+posterior > 0.5.   
+
+
+
+
+How do those compare with the 105,000 hi quality SNPs that we called?
+```{r}
+angsd_hi_conf <- colnames(sgg)[keepers]
+inty <- intersect(colnames(wifl012), angsd_hi_conf)
+```
+About half.
+
+## Calling genotypes from the 0.65X data using ANGSD
+It might be better to call SNPS using ANGSD for plotting the results.  So, we will 
+use the same sorts of settings that were used for the PCA and just doGenos 2 on it.
+
+This will use a script that looks like this:
+```sh
+#!/bin/bash
+#$ -cwd
+#$ -V
+#$ -N gcall
+#$ -o gcall$TASK_ID.log
+#$ -e gcall$TASK_ID.error
+#$ -l h_data=4G,time=6:00:00
+#$ -M eric.anderson@noaa.gov
+#$ -t 1-3:1    
+
+# Full Run =  -t 1-247:1
+
+FNUM=$(printf '%03d' $SGE_TASK_ID)
+
+source /u/local/Modules/default/init/modules.sh
+module load zlib/1.2.8
+
+minInd=87 # half of 175
+ANGSD=~/nobackup-klohmuel/bin/ngsTools/angsd/angsd
+BAMLIST=bamlist
+
+# then fire off angsd
+$ANGSD -bam $BAMLIST -out $FNUM \
+  -rf region_files/$FNUM.txt \
+  -minQ 20 -minMapQ 10 \
+  -minInd $minInd -GL 1 -doMajorMinor 1 -doMaf 2 -SNP_pval 1e-6 \
+  -minMaf 0.05 -doGeno 2 -doPost 2
+  
+sleep 300
+
+```
+Hoffman is a little crotchety, but I got that started and everthing ran well.
+After that we just have to squash everythig into a results file...
+```sh
+(zcat 001.mafs.gz | head -n 1; for i in [0-9][0-9][0-9].mafs.gz; do zcat $i | awk 'NR==1 {next} {print}'; done) > gcall_results.mafs
+
+cat [0-9][0-9][0-9].geno.gz > gcall_results.geno.gz
+```
+That has delivered 20,852 SNPs.  OK...
+
+After getting it to my laptop I turn it into an 012 file:
+```{r}
+gmat <- read_tsv("pca_fst_stuff_from_hoffman/angsd-genos/gcall_results.geno.gz", col_names = FALSE) %>%
+  select(-X178) %>%  # get rid of a superfluous column
+  as.data.frame() 
+  
+rownames(gmat) <-  paste(gmat[,1], gmat[,2], sep = "--")
+gmat <- as.matrix(gmat[, -(1:2)])
+storage.mode(gmat) <- "integer"
+gcall012 <- t(gmat)
+
+# and put the rownames on there
+rownames(gcall012) <- scan("pca_fst_stuff_from_hoffman/175_wifls.txt", what = "character")
+```
+
+Now we want to pick out just the AZ extimus birds:
+```{r}
+AZ3 <- wifl_grp %>%
+  filter(state == "AZ", subspp == "3") %>%
+  filter(sample %in% rownames(gcall012))
+
+gcallAZ <- gcall012[AZ3$sample, ]
+
+gfc_AAZ <- genoscapeRtools::geno_freq_calcs(gcallAZ)
+```
+
+Look at a quick plot of that:
+```{r}
+ggplot(gfc_AAZ , aes(x = p_exp, y = p_obs, colour = geno)) +
+    geom_jitter(alpha = 0.15, position = position_jitter(width = 0.01, height = 0.01)) +
+    facet_wrap(~ geno) +
+    geom_polygon(data = geno_freq_boundaries(), fill = NA, linetype = "dashed", colour = "black") + 
+    geom_abline(slope = 1, intercept = 0, linetype = "solid")
+```
+
+### Making a final plot of that
+
+We want to make one that is just the homozygotes and we want to have the complete
+data and the subsampled data.
+```{r}
+gfc_wifl_az <- genoscapeRtools::geno_freq_calcs(wifl012[AZ3$sample, ])
+
+both_em <- bind_rows(
+  gfc_wifl_az %>% 
+    filter(geno == 0 | geno == 2) %>%
+    mutate(analysis = "(a) 36X GATK,  n = 37,  L = 105,000"),
+  gfc_AAZ %>%
+    filter(geno == 0 | geno == 2) %>%
+    mutate(analysis = "(b) 0.65X ANGSD,  n = 37,  L = 20,852")
+)
+
+
+g <- ggplot(both_em , aes(x = p_exp, y = p_obs)) +
+  geom_jitter(alpha = 0.01, position = position_jitter(width = 0.01, height = 0.01), colour = "blue") +
+  facet_wrap(~ analysis, ncol = 1) +
+  geom_polygon(data = geno_freq_boundaries() %>% filter(geno == 0), fill = NA, linetype = "dashed", colour = "black") + 
+  geom_abline(slope = 1, intercept = 0, linetype = "solid") +
+  xlab("Expected homozygote frequency") + 
+  ylab("Observed homozygote frequency")
+
+ggsave(g, filename = "outputs/full_wifl_vs_065X_geno_ppns.pdf", width = 4, height = 6)
+```
+## Exploring the same thing with the mykiss data:
+
+
+```{r}
+ss <- 120000
+genos <- paste0("../explorations/pca_fst_stuff_from_hoffman/mykiss-angsd-genos/eric-pca-exploration-outputs/all_indivs_maf_01_ss_", ss, ".geno.gz")
+mafs <- paste0("../explorations/pca_fst_stuff_from_hoffman/mykiss-angsd-genos/eric-pca-exploration-outputs/all_indivs_maf_01_ss_", ss, ".mafs.gz")
+
+sams <- paste0("../explorations/pca_fst_stuff_from_hoffman/mykiss-angsd-genos/eric-pca-exploration-outputs/ss_", ss, "_bamlist.txt")
+
+# read in the angsd probs
+aprobs <- genoscapeRtools::read_angsd_geno_probs(genos, sams, mafs)
+
+# make a string for the locus names
+snps <- paste(aprobs$snps$chromo, aprobs$snps$position, sep = "--")
+
+# simualate the genos
+sgenos <- genoscapeRtools::sample_from_angsd_probs(x = aprobs$probs,
+                                                   samples = aprobs$samples, 
+                                                   snps = snps, 
+                                                   thresh = 0.80)
+
+# now we want to make some plots.  Grab the largest sample, which is UmpM
+UmpM <- tibble(sample = rownames(sgenos)) %>% 
+  separate(sample, into = c("spp", "pop", "mig"), extra = "drop", remove = FALSE) %>%
+  filter(pop == "Ump", mig == "M")
+
+sgg <- sgenos[UmpM$sample, ]
+
+# explore keeping only things called in at least 80%
+keepers <- apply(sgenos, 2, function(x) mean(x > -1)) > 0.50
+#losers <- apply(sgg, 2, function(x) mean(x > -1)) < 0.10
+
+#gfc <- geno_freq_calcs(sgg[ , sample(x = 1:ncol(sgg), size = min(c(20000, ncol(sgg))))])
+#gfc <- geno_freq_calcs(sgg[ ,keepers])
+gfc <- geno_freq_calcs(sgg)
+
+source("../../gbs-miscall-rates/R/geno-freq-boundaries.R")
+
+ggplot(gfc , aes(x = p_exp, y = p_obs, colour = geno)) +
+    geom_jitter(alpha = 0.02, position = position_jitter(width = 0.01, height = 0.01)) +
+    facet_wrap(~ geno) +
+    geom_polygon(data = geno_freq_boundaries(), fill = NA, linetype = "dashed", colour = "black") + 
+    geom_abline(slope = 1, intercept = 0, linetype = "solid")
+```
+
+
